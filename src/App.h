@@ -7,6 +7,8 @@
 #include <GLFW/glfw3.h>
 #include "Kinect.h"
 #include <NuiKinectFusionApi.h> 
+#include <locale>
+#include <codecvt>
 
 
 namespace basicgraphics {
@@ -88,8 +90,9 @@ namespace basicgraphics {
 		/// <summary>
 		/// Setup or update the Undistortion calculation for the connected camera
 		/// </summary>
-		HRESULT                     SetupUndistortion();
+		HRESULT       SetupUndistortion();
 
+	
 		/// <summary>
 		/// Handle Coordinate Mapping changed event.
 		/// Note, this happens after sensor connect, or when Kinect Studio connects
@@ -106,6 +109,9 @@ namespace basicgraphics {
 		/// Handle new depth data
 		/// </summary>
 		void                        ProcessDepth();
+
+
+		HRESULT	 WriteBinarySTLMeshFile(INuiFusionMesh *mesh, std::string filename, bool flipYZ);
 
 		/// <summary>
 		/// Reset the reconstruction camera pose and clear the volume.
@@ -175,6 +181,10 @@ namespace basicgraphics {
 		/// or set false to never automatically reset.
 		/// </summary>
 		bool                        m_bAutoResetReconstructionWhenLost;
+
+
+
+
 
 		/// <summary>
 		/// Parameter to enable automatic reset of the reconstruction when there is a large

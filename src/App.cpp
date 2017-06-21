@@ -1,5 +1,7 @@
 #include "App.h"
 #include <iostream>
+#include <fstream>
+
 
 namespace basicgraphics {
 
@@ -121,29 +123,30 @@ namespace basicgraphics {
 
 
 		kinectVision = Texture::createEmpty("from kinect", m_cDepthWidth, m_cDepthHeight, 0, GL_RGBA, true, GL_TEXTURE_2D, GL_RGBA);
+		glfwSetWindowSize(_window, m_cDepthWidth*2, m_cDepthHeight*2);
 		//std::shared_ptr<Texture> Texture::createEmpty(const std::string &name, int width, int height, int depth, int numMipMapLevels, bool autoMipMap, GLenum target, GLenum internalFormat)
 
 		Mesh::Vertex vertex;
 	std:vector<Mesh::Vertex> cpuVertexArray;
 		std::vector<int> cpuIndexArray;
 		int index = 0;
-		vertex.position = glm::vec3(-10,-10, 0);
+		vertex.position = glm::vec3(-2,-2, 0);
 		vertex.normal = glm::vec3(0, 0, 1);
 		vertex.texCoord0 = glm::vec2(1,1);
 		cpuVertexArray.push_back(vertex);
 		cpuIndexArray.push_back(index);
 		index++;
-		vertex.position = glm::vec3(10, -10, 0);
+		vertex.position = glm::vec3(2, -2, 0);
 		vertex.texCoord0 = glm::vec2(0, 1);
 		cpuVertexArray.push_back(vertex);
 		cpuIndexArray.push_back(index);
 		index++;
-		vertex.position = glm::vec3(10, 10, 0);
+		vertex.position = glm::vec3(2, 2, 0);
 		vertex.texCoord0 = glm::vec2(0, 0);
 		cpuVertexArray.push_back(vertex);
 		cpuIndexArray.push_back(index);
 		index++;
-		vertex.position = glm::vec3(-10, 10, 0);
+		vertex.position = glm::vec3(-2, 2, 0);
 		vertex.texCoord0 = glm::vec2(1, 0);
 		cpuVertexArray.push_back(vertex);
 		cpuIndexArray.push_back(index);
@@ -731,7 +734,7 @@ namespace basicgraphics {
 		// Draw the shaded raycast volume image
 		BYTE * pBuffer = m_pShadedSurface->pFrameBuffer->pBits;
 
-		cout << m_pShadedSurface->width << ", " << m_pShadedSurface->height<<", "<<m_cDepthWidth<<", "<< m_cDepthHeight << endl;
+	//	cout << m_pShadedSurface->width << ", " << m_pShadedSurface->height<<", "<<m_cDepthWidth<<", "<< m_cDepthHeight << endl;
 
 		// Draw the data
 		//TODO: update your texture here
@@ -828,11 +831,129 @@ namespace basicgraphics {
 		if (name == "kbd_UP_down" || name == "kbd_UP_repeat") {
 			ResetReconstruction();
 		}
+		if (name == "kbd_S_down") {
+			INuiFusionMesh* mesh = nullptr;
+			HRESULT hr = m_pVolume->CalculateMesh(1,&mesh);
+			if (SUCCEEDED(hr)) {
+				ofstream OutFile("H:\\UsingBasicGraphics\\test.stl");
+				hr = WriteBinarySTLMeshFile(mesh, "H:\\UsingBasicGraphics\\test.stl",false);
+				if (SUCCEEDED(hr)) {
+					cout << "Done" << endl;
+				}
+				else {
+					cout << "file saving failed" << endl;
+				}
+			}
+			else {
+				cout << "Mesh creation failed" << endl;
+			}
+		}
 	}
-
 
 	
 
+	HRESULT App::WriteBinarySTLMeshFile(INuiFusionMesh *mesh, std::string filename, bool flipYZ)
+	{
+		HRESULT hr = S_OK;
+
+		if (NULL == mesh)
+		{
+			cout << "Invalid mesh" << endl;
+			return E_INVALIDARG;
+		}
+
+
+		unsigned int numVertices = mesh->VertexCount();
+		unsigned int numTriangleIndices = mesh->TriangleVertexIndexCount();
+		unsigned int numTriangles = numVertices / 3;
+
+		if (0 == numVertices || 0 == numTriangleIndices || 0 != numVertices % 3 || numVertices != numTriangleIndices)
+		{
+			cout << "Invalid mesh" << endl;
+			return E_INVALIDARG;
+		}
+	
+
+		const Vector3 *vertices = NULL;
+		hr = mesh->GetVertices(&vertices);
+		if (FAILED(hr))
+		{
+			cout << "Unable to get vertices" << endl;
+			return hr;
+		}
+
+		const Vector3 *normals = NULL;
+		hr = mesh->GetNormals(&normals);
+		if (FAILED(hr))
+		{
+			cout << "Unable to get normals" << endl;
+			return hr;
+		}
+
+		const int *triangleIndices = NULL;
+		hr = mesh->GetTriangleIndices(&triangleIndices);
+		if (FAILED(hr))
+		{
+			cout << "Unable to get triangleindices" << endl;
+			return hr;
+		}
+
+		// Open File
+		
+		FILE *meshFile = NULL;
+		errno_t err = fopen_s(&meshFile, filename.c_str(), "wb");
+
+		// Could not open file for writing - return
+		if (0 != err || NULL == meshFile)
+		{
+			cout << "cannot open the file" << endl;
+			return E_ACCESSDENIED;
+		}
+
+		// Write the header line
+		const unsigned char header[80] = { 0 };   // initialize all values to 0
+		fwrite(&header, sizeof(unsigned char), ARRAYSIZE(header), meshFile);
+
+		// Write number of triangles
+		fwrite(&numTriangles, sizeof(int), 1, meshFile);
+
+		// Sequentially write the normal, 3 vertices of the triangle and attribute, for each triangle
+		for (unsigned int t = 0; t < numTriangles; ++t)
+		{
+			Vector3 normal = normals[t * 3];
+
+			if (flipYZ)
+			{
+				normal.y = -normal.y;
+				normal.z = -normal.z;
+			}
+
+			// Write normal
+			fwrite(&normal, sizeof(float), 3, meshFile);
+
+			// Write vertices
+			for (unsigned int v = 0; v<3; v++)
+			{
+				Vector3 vertex = vertices[(t * 3) + v];
+
+				if (flipYZ)
+				{
+					vertex.y = -vertex.y;
+					vertex.z = -vertex.z;
+				}
+
+				fwrite(&vertex, sizeof(float), 3, meshFile);
+			}
+
+			unsigned short attribute = 0;
+			fwrite(&attribute, sizeof(unsigned short), 1, meshFile);
+		}
+
+		fflush(meshFile);
+		fclose(meshFile);
+
+		return hr;
+	}
 }
 //namespace
 
