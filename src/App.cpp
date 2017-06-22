@@ -44,7 +44,16 @@ namespace basicgraphics {
 		m_bInitializeError(false),
 		m_pDepthFrameReader(NULL),
 		m_coordinateMappingChangedEvent(NULL),
-		m_bHaveValidCameraParameters(false) {
+		m_bHaveValidCameraParameters(false),
+		m_bSavingMesh(false)
+		///added color portion
+		/*m_pColorCoordinates(nullptr),
+		m_pColorImage(nullptr),
+		m_pResampledColorImage(nullptr),
+		m_pResampledColorImageDepthAligned(nullptr),
+		m_pCapturedSurfaceColor(nullptr)*/
+	
+	{
 
 		// Get the depth frame size from the NUI_IMAGE_RESOLUTION enum
 		// You can use NUI_IMAGE_RESOLUTION_640x480 or NUI_IMAGE_RESOLUTION_320x240 in this sample
@@ -52,6 +61,7 @@ namespace basicgraphics {
 		m_cDepthWidth = NUI_DEPTH_RAW_WIDTH;
 		m_cDepthHeight = NUI_DEPTH_RAW_HEIGHT;
 		m_cDepthImagePixels = m_cDepthWidth * m_cDepthHeight;
+
 
 		// create heap storage for depth pixel data in RGBX format
 		m_pDepthRGBX = new BYTE[m_cDepthImagePixels * cBytesPerPixel];
@@ -169,9 +179,16 @@ namespace basicgraphics {
 		SAFE_FUSION_RELEASE_IMAGE_FRAME(m_pShadedSurface);
 		SAFE_FUSION_RELEASE_IMAGE_FRAME(m_pPointCloud);
 		SAFE_FUSION_RELEASE_IMAGE_FRAME(m_pDepthFloatImage);
-
+	/*	
+		SAFE_FUSION_RELEASE_IMAGE_FRAME(m_pColorImage);
+		SAFE_FUSION_RELEASE_IMAGE_FRAME(m_pResampledColorImage);
+		SAFE_FUSION_RELEASE_IMAGE_FRAME(m_pResampledColorImageDepthAligned);
+		SAFE_FUSION_RELEASE_IMAGE_FRAME(m_pCapturedSurfaceColor);
+*/
 		// done with depth frame reader
 		SafeRelease(m_pDepthFrameReader);
+		//done with color frame reader
+	//	SafeRelease(m_pColorFrameReader);
 
 		// Clean up Kinect
 		if (m_pNuiSensor)
@@ -188,6 +205,9 @@ namespace basicgraphics {
 
 		// done with depth pixel data
 		SAFE_DELETE_ARRAY(m_pDepthRGBX);
+
+		//Clean up the color coordinate array
+		//SAFE_DELETE_ARRAY(m_pColorCoordinates);
 	}
 
 	/// <summary>
@@ -278,6 +298,7 @@ namespace basicgraphics {
 		{
 			// Initialize the Kinect and get the depth reader
 			IDepthFrameSource* pDepthFrameSource = NULL;
+			//IColorFrameSource* pColorFrameSource = NULL;
 
 			hr = m_pNuiSensor->Open();
 
@@ -300,8 +321,18 @@ namespace basicgraphics {
 			{
 				hr = pDepthFrameSource->OpenReader(&m_pDepthFrameReader);
 			}
+		/*	if (SUCCEEDED(hr))
+			{
+				hr = m_pNuiSensor->get_ColorFrameSource(&pColorFrameSource);
+			}*/
+
+			/*if (SUCCEEDED(hr))
+			{
+				hr = pColorFrameSource->OpenReader(&m_pColorFrameReader);
+			}*/
 
 			SafeRelease(pDepthFrameSource);
+			//SafeRelease(pColorFrameSource);
 		}
 
 		if (nullptr == m_pNuiSensor || FAILED(hr))
@@ -442,12 +473,21 @@ namespace basicgraphics {
 		UpdateIntrinsics(m_pDepthFloatImage, &m_cameraParameters);
 		UpdateIntrinsics(m_pPointCloud, &m_cameraParameters);
 		UpdateIntrinsics(m_pShadedSurface, &m_cameraParameters);
+		//COLOR portion
+		/*UpdateIntrinsics(m_pColorImage, &m_cameraParameters);
+		UpdateIntrinsics(m_pResampledColorImage, &m_cameraParameters);
+		UpdateIntrinsics(m_pResampledColorImageDepthAligned, &m_cameraParameters);
+		UpdateIntrinsics(m_pCapturedSurfaceColor, &m_cameraParameters);*/
 
 		if (nullptr == m_pDepthDistortionMap)
 		{
 			cout << "Failed to initialize Kinect Fusion depth image distortion buffer." << endl;
 			return E_OUTOFMEMORY;
 		}
+
+	/*	if (nullptr == m_pColorCoordinates){
+			cout << "Failed to initialize Kinect Fusion color image coordinate buffer" << endl;
+		}*/
 
 		hr = SetupUndistortion();
 		return hr;
@@ -465,6 +505,7 @@ namespace basicgraphics {
 		WCHAR description[MAX_PATH];
 		WCHAR instancePath[MAX_PATH];
 		UINT memorySize = 0;
+
 
 		if (FAILED(hr = NuiFusionGetDeviceInfo(
 			m_processorType,
@@ -498,6 +539,13 @@ namespace basicgraphics {
 			m_processorType, m_deviceIndex,
 			&m_worldToCameraTransform,
 			&m_pVolume);
+
+		//Create a color volume
+		//hr = NuiFusionCreateColorReconstruction(
+		//	&m_reconstructionParams,
+		//	m_processorType, m_deviceIndex,
+		//	&m_worldToCameraTransform,
+		//	&m_pVolume);
 
 		if (FAILED(hr))
 		{
@@ -547,11 +595,22 @@ namespace basicgraphics {
 
 		// Frames generated from the depth input
 		hr = NuiFusionCreateImageFrame(NUI_FUSION_IMAGE_TYPE_FLOAT, m_cDepthWidth, m_cDepthHeight, &m_cameraParameters, &m_pDepthFloatImage);
-		if (FAILED(hr))
-		{
+		if (FAILED(hr)){
 			cout << "Failed to initialize Kinect Fusion image." << endl;
 			return hr;
 		}
+
+		////Frame generated from the raw color input of Kinect
+		//if (FAILED(hr = NuiFusionCreateImageFrame(NUI_FUSION_IMAGE_TYPE_COLOR, cColorWidth, cColorHeight, &m_cameraParameters, &m_pColorImage))){
+		//	cout << "Failed to initialize Kinect Fusion image." << endl;
+		//	return hr;
+		//}
+
+		////Frame re-sampled from the color input of Kinect
+		//if (FAILED(hr = NuiFusionCreateImageFrame(NUI_FUSION_IMAGE_TYPE_COLOR, m_cDepthWidth, m_cDepthHeight, &m_cameraParameters, &m_pResampledColorImageDepthAligned))) {
+		//	cout << "Failed to initialize Kinect Fusion image." << endl;
+		//	return hr;
+		//}
 
 		// Create images to raycast the Reconstruction Volume
 		hr = NuiFusionCreateImageFrame(NUI_FUSION_IMAGE_TYPE_POINT_CLOUD, m_cDepthWidth, m_cDepthHeight, &m_cameraParameters, &m_pPointCloud);
@@ -593,6 +652,14 @@ namespace basicgraphics {
 			cout << "Failed to initialize Kinect Fusion depth image distortion Lookup Table." << endl;
 			return E_OUTOFMEMORY;
 		}
+
+		//SAFE_DELETE_ARRAY(m_pColorCoordinates);
+		//m_pColorCoordinates = new(std::nothrow)ColorSpacePoint[m_cDepthHeight*m_cDepthWidth];
+		//if (nullptr == m_pColorCoordinates){
+		//	cout<<"Failed to initialize Kinect Fusion color image coordinate buffer."<<endl;
+		//	return E_OUTOFMEMORY;
+		//}
+
 
 		// If we have valid parameters, let's go ahead and use them.
 		if (m_cameraParameters.focalLengthX != 0)
@@ -819,7 +886,9 @@ namespace basicgraphics {
 		shader.setUniform("model_mat", mat4(1.0));
 		shader.setUniform("eye_world", eye_world);
 
-		kinectVision->update(m_pShadedSurface->pFrameBuffer->pBits, GL_RGBA, GL_UNSIGNED_BYTE);
+		if (!m_bSavingMesh) {
+			kinectVision->update(m_pShadedSurface->pFrameBuffer->pBits, GL_RGBA, GL_UNSIGNED_BYTE);
+		}
 		_mesh->draw(shader);
 	}
 
@@ -832,11 +901,11 @@ namespace basicgraphics {
 			ResetReconstruction();
 		}
 		if (name == "kbd_S_down") {
+			m_bSavingMesh = true;
 			INuiFusionMesh* mesh = nullptr;
 			HRESULT hr = m_pVolume->CalculateMesh(1,&mesh);
 			if (SUCCEEDED(hr)) {
-				ofstream OutFile("H:\\UsingBasicGraphics\\test.stl");
-				hr = WriteBinarySTLMeshFile(mesh, "H:\\UsingBasicGraphics\\test.stl",false);
+				hr = WriteAsciiObjMeshFile(mesh, "testboop", false );
 				if (SUCCEEDED(hr)) {
 					cout << "Done" << endl;
 				}
@@ -847,21 +916,31 @@ namespace basicgraphics {
 			else {
 				cout << "Mesh creation failed" << endl;
 			}
+			m_bSavingMesh = false;
 		}
 	}
 
 	
 
-	HRESULT App::WriteBinarySTLMeshFile(INuiFusionMesh *mesh, std::string filename, bool flipYZ)
+
+
+
+	/// <summary>
+	/// Write ASCII Wavefront .OBJ file
+	/// See http://en.wikipedia.org/wiki/Wavefront_.obj_file for .OBJ format
+	/// </summary>
+	/// <param name="mesh">The Kinect Fusion mesh object.</param>
+	/// <param name="lpOleFileName">The full path and filename of the file to save.</param>
+	/// <param name="flipYZ">Flag to determine whether the Y and Z values are flipped on save.</param>
+	/// <returns>indicates success or failure</returns>
+	HRESULT App::WriteAsciiObjMeshFile(INuiFusionMesh *mesh, std::string filename, bool flipYZ)
 	{
 		HRESULT hr = S_OK;
 
 		if (NULL == mesh)
 		{
-			cout << "Invalid mesh" << endl;
 			return E_INVALIDARG;
 		}
-
 
 		unsigned int numVertices = mesh->VertexCount();
 		unsigned int numTriangleIndices = mesh->TriangleVertexIndexCount();
@@ -869,16 +948,13 @@ namespace basicgraphics {
 
 		if (0 == numVertices || 0 == numTriangleIndices || 0 != numVertices % 3 || numVertices != numTriangleIndices)
 		{
-			cout << "Invalid mesh" << endl;
 			return E_INVALIDARG;
 		}
-	
 
 		const Vector3 *vertices = NULL;
 		hr = mesh->GetVertices(&vertices);
 		if (FAILED(hr))
 		{
-			cout << "Unable to get vertices" << endl;
 			return hr;
 		}
 
@@ -886,7 +962,6 @@ namespace basicgraphics {
 		hr = mesh->GetNormals(&normals);
 		if (FAILED(hr))
 		{
-			cout << "Unable to get normals" << endl;
 			return hr;
 		}
 
@@ -894,66 +969,244 @@ namespace basicgraphics {
 		hr = mesh->GetTriangleIndices(&triangleIndices);
 		if (FAILED(hr))
 		{
-			cout << "Unable to get triangleindices" << endl;
 			return hr;
 		}
 
-		// Open File
-		
 		FILE *meshFile = NULL;
-		errno_t err = fopen_s(&meshFile, filename.c_str(), "wb");
+		errno_t err = fopen_s(&meshFile, filename.c_str(), "wt");
 
 		// Could not open file for writing - return
 		if (0 != err || NULL == meshFile)
 		{
-			cout << "cannot open the file" << endl;
 			return E_ACCESSDENIED;
 		}
 
 		// Write the header line
-		const unsigned char header[80] = { 0 };   // initialize all values to 0
-		fwrite(&header, sizeof(unsigned char), ARRAYSIZE(header), meshFile);
+		std::string header = "#\n# OBJ file created by Microsoft Kinect Fusion\n#\n";
+		fwrite(header.c_str(), sizeof(char), header.length(), meshFile);
 
-		// Write number of triangles
-		fwrite(&numTriangles, sizeof(int), 1, meshFile);
+		const unsigned int bufSize = MAX_PATH * 3;
+		char outStr[bufSize];
+		int written = 0;
 
-		// Sequentially write the normal, 3 vertices of the triangle and attribute, for each triangle
-		for (unsigned int t = 0; t < numTriangles; ++t)
+		if (flipYZ)
 		{
-			Vector3 normal = normals[t * 3];
-
-			if (flipYZ)
+			// Sequentially write the 3 vertices of the triangle, for each triangle
+			for (unsigned int t = 0, vertexIndex = 0; t < numTriangles; ++t, vertexIndex += 3)
 			{
-				normal.y = -normal.y;
-				normal.z = -normal.z;
+				written = sprintf_s(outStr, bufSize, "v %f %f %f\nv %f %f %f\nv %f %f %f\n",
+					vertices[vertexIndex].x, -vertices[vertexIndex].y, -vertices[vertexIndex].z,
+					vertices[vertexIndex + 1].x, -vertices[vertexIndex + 1].y, -vertices[vertexIndex + 1].z,
+					vertices[vertexIndex + 2].x, -vertices[vertexIndex + 2].y, -vertices[vertexIndex + 2].z);
+				fwrite(outStr, sizeof(char), written, meshFile);
 			}
 
-			// Write normal
-			fwrite(&normal, sizeof(float), 3, meshFile);
-
-			// Write vertices
-			for (unsigned int v = 0; v<3; v++)
+			// Sequentially write the 3 normals of the triangle, for each triangle
+			for (unsigned int t = 0, normalIndex = 0; t < numTriangles; ++t, normalIndex += 3)
 			{
-				Vector3 vertex = vertices[(t * 3) + v];
-
-				if (flipYZ)
-				{
-					vertex.y = -vertex.y;
-					vertex.z = -vertex.z;
-				}
-
-				fwrite(&vertex, sizeof(float), 3, meshFile);
+				written = sprintf_s(outStr, bufSize, "n %f %f %f\nn %f %f %f\nn %f %f %f\n",
+					normals[normalIndex].x, -normals[normalIndex].y, -normals[normalIndex].z,
+					normals[normalIndex + 1].x, -normals[normalIndex + 1].y, -normals[normalIndex + 1].z,
+					normals[normalIndex + 2].x, -normals[normalIndex + 2].y, -normals[normalIndex + 2].z);
+				fwrite(outStr, sizeof(char), written, meshFile);
+			}
+		}
+		else
+		{
+			// Sequentially write the 3 vertices of the triangle, for each triangle
+			for (unsigned int t = 0, vertexIndex = 0; t < numTriangles; ++t, vertexIndex += 3)
+			{
+				written = sprintf_s(outStr, bufSize, "v %f %f %f\nv %f %f %f\nv %f %f %f\n",
+					vertices[vertexIndex].x, vertices[vertexIndex].y, vertices[vertexIndex].z,
+					vertices[vertexIndex + 1].x, vertices[vertexIndex + 1].y, vertices[vertexIndex + 1].z,
+					vertices[vertexIndex + 2].x, vertices[vertexIndex + 2].y, vertices[vertexIndex + 2].z);
+				fwrite(outStr, sizeof(char), written, meshFile);
 			}
 
-			unsigned short attribute = 0;
-			fwrite(&attribute, sizeof(unsigned short), 1, meshFile);
+			// Sequentially write the 3 normals of the triangle, for each triangle
+			for (unsigned int t = 0, normalIndex = 0; t < numTriangles; ++t, normalIndex += 3)
+			{
+				written = sprintf_s(outStr, bufSize, "n %f %f %f\nn %f %f %f\nn %f %f %f\n",
+					normals[normalIndex].x, normals[normalIndex].y, normals[normalIndex].z,
+					normals[normalIndex + 1].x, normals[normalIndex + 1].y, normals[normalIndex + 1].z,
+					normals[normalIndex + 2].x, normals[normalIndex + 2].y, normals[normalIndex + 2].z);
+				fwrite(outStr, sizeof(char), written, meshFile);
+			}
 		}
 
+		// Sequentially write the 3 vertex indices of the triangle face, for each triangle
+		// Note this is typically 1-indexed in an OBJ file when using absolute referencing!
+		for (unsigned int t = 0, baseIndex = 1; t < numTriangles; ++t, baseIndex += 3) // Start at baseIndex=1 for the 1-based indexing.
+		{
+			written = sprintf_s(outStr, bufSize, "f %u//%u %u//%u %u//%u\n",
+				baseIndex, baseIndex, baseIndex + 1, baseIndex + 1, baseIndex + 2, baseIndex + 2);
+			fwrite(outStr, sizeof(char), written, meshFile);
+		}
+
+		// Note: we do not have texcoords to store, if we did, we would put the index of the texcoords between the vertex and normal indices (i.e. between the two slashes //) in the string above
 		fflush(meshFile);
 		fclose(meshFile);
 
 		return hr;
 	}
+
+
+	/*HRESULT App::exportMesh(const std::string &filename, INuiFusionMesh *mesh) {
+		
+		aiScene* scene = new aiScene();
+		scene->mRootNode = new aiNode;
+		HRESULT hr = S_OK;
+		std::vector<aiMesh*> MeshArray;
+		//assert(NULL != )
+		//const size_t oldMeshSize = MeshArray.size();
+		aiNode *pNode = new aiNode;
+		pNode->mName = "model";
+		aiNode *pParent = scene->mRootNode;
+		aiMesh *pMesh = new aiMesh;
+		if (pParent != NULL) {
+			appendChildToParentNode(pParent, pNode);
+		}
+
+		const Vector3 *vertices = NULL;
+		hr = mesh->GetVertices(&vertices);
+		if (FAILED(hr))
+		{
+			return hr;
+		}
+
+		const Vector3 *normals = NULL;
+		hr = mesh->GetNormals(&normals);
+		if (FAILED(hr))
+		{
+			return hr;
+		}
+
+		const int *triangleIndices = NULL;
+		hr = mesh->GetTriangleIndices(&triangleIndices);
+		if (FAILED(hr))
+		{
+			return hr;
+		}
+		unsigned int numVertices = mesh->VertexCount();
+		unsigned int numTriangleIndices = mesh->TriangleVertexIndexCount();
+		unsigned int numTriangles = numVertices / 3;
+
+		pMesh->mNumFaces = numTriangles;
+		if (pMesh->mNumFaces > 0) {
+			pMesh->mFaces = new aiFace[pMesh->mNumFaces];
+			
+			for (int i = 0; i < numTriangles; i++) {
+				aiFace *pFace = &pMesh->mFaces[i];
+				pFace->mNumIndices = 3;
+				pFace->mIndices = new unsigned int[3];
+			}
+		}
+		pMesh->mNumVertices = numTriangles * 3;
+		
+		if (pMesh->mNumVertices > 0) {
+			pMesh->mVertices = new aiVector3D[pMesh->mNumVertices];
+			pMesh->mNormals = new aiVector3D[pMesh->mNumVertices];
+			pMesh->mNumUVComponents[0] = 2;
+			pMesh->mTextureCoords[0] = new aiVector3D[pMesh->mNumVertices];
+
+			for (int i = 0; i < numVertices; i++) {
+				glm::dvec3 pt = dvec3(vertices[i].x, vertices[i].y, vertices[i].z);
+				pMesh->mVertices[i].x = pt.x;
+				pMesh->mVertices[i].y = pt.y;
+				pMesh->mVertices[i].z = pt.z;
+			//	cout << pMesh -> mVertices[i].x <<","<< pMesh->mVertices[i].y <<","<< pMesh->mVertices[i].z << endl;
+				glm::dvec3 normal = dvec3(normals[i].x, normals[i].y, normals[i].z);
+				pMesh->mNormals[i].x = normal.x;
+				pMesh->mNormals[i].y = normal.y;
+				pMesh->mNormals[i].z = normal.z;
+				pMesh->mTextureCoords[0][i].x = 0.0;
+				pMesh->mTextureCoords[0][i].y = 0.0;
+				pMesh->mTextureCoords[0][i].z = 0.0;
+			}
+			for (int i = 0; i < numTriangles; i++) {
+				aiFace *pDestFace = &pMesh->mFaces[i];
+				for (int j = 0; j < 3; j++) {
+					pDestFace->mIndices[j] = triangleIndices[3*i+j];
+				}
+			}
+			MeshArray.push_back(pMesh);
+		}
+		else {
+			delete pMesh;
+		}
+		pNode->mMeshes = new unsigned int[1];
+		pNode->mNumMeshes = 1;
+		scene->mNumMeshes = 1;
+		scene->mMeshes = new aiMesh*[1];
+		scene->mMeshes[0] = pMesh;
+		
+		scene->mNumMaterials = 1;
+		scene->mMaterials = new aiMaterial*[1];
+		aiMaterial* mat = new aiMaterial;
+		aiString matName("defaultMaterial");
+		mat->AddProperty(&matName, AI_MATKEY_NAME);
+		int sm = aiShadingMode_Phong;
+		mat->AddProperty<int>(&sm, 1, AI_MATKEY_SHADING_MODEL);
+
+		aiColor3D diffuse(0.7, 0.7, 0.7);
+		aiColor3D ambient(0.2, 0.2, 0.2);
+		aiColor3D specular(1.0, 1.0, 1.0);
+		float shineness = 0.5;
+		float alpha = 1.0;
+		mat->AddProperty(&ambient, 1, AI_MATKEY_COLOR_AMBIENT);
+		mat->AddProperty(&diffuse, 1, AI_MATKEY_COLOR_DIFFUSE);
+		mat->AddProperty(&specular, 1, AI_MATKEY_COLOR_SPECULAR);
+		mat->AddProperty(&shineness, 1, AI_MATKEY_SHININESS);
+		mat->AddProperty(&alpha, 1, AI_MATKEY_OPACITY);
+		scene->mMaterials[0] = mat;
+
+
+		
+		if (_exporter.get() == nullptr) {
+			_exporter.reset(new Assimp::Exporter());
+		}
+		aiReturn airesult=_exporter->Export(scene, "obj", filename, 0);
+		if (FAILED(airesult)) {
+			cout << "failed to save" << endl;
+			return !hr;
+		}
+		delete scene;
+		return hr;
+	}
+
+	void App::appendChildToParentNode(aiNode *pParent, aiNode *pChild)
+	{
+		// Checking preconditions
+		assert(NULL != pParent);
+		assert(NULL != pChild);
+
+		// Assign parent to child
+		pChild->mParent = pParent;
+		size_t sNumChildren = 0;
+		(void)sNumChildren; // remove warning on release build
+
+							// If already children was assigned to the parent node, store them in a 
+		std::vector<aiNode*> temp;
+		if (pParent->mChildren != NULL)
+		{
+			sNumChildren = pParent->mNumChildren;
+			assert(0 != sNumChildren);
+			for (size_t index = 0; index < pParent->mNumChildren; index++)
+			{
+				temp.push_back(pParent->mChildren[index]);
+			}
+			delete[] pParent->mChildren;
+		}
+
+		// Copy node instances into parent node
+		pParent->mNumChildren++;
+		pParent->mChildren = new aiNode*[pParent->mNumChildren];
+		for (size_t index = 0; index < pParent->mNumChildren - 1; index++)
+		{
+			pParent->mChildren[index] = temp[index];
+		}
+		pParent->mChildren[pParent->mNumChildren - 1] = pChild;
+	}*/
 }
 //namespace
 

@@ -9,6 +9,12 @@
 #include <NuiKinectFusionApi.h> 
 #include <locale>
 #include <codecvt>
+#include <assimp/Exporter.hpp>
+#include <assimp/scene.h>
+#include <assimp/postprocess.h> 
+#include <assimp/DefaultLogger.hpp>
+#include <assimp/LogStream.hpp>
+#include <assimp/IOSystem.hpp>
 
 
 namespace basicgraphics {
@@ -43,6 +49,11 @@ namespace basicgraphics {
 		static const int            cResetOnNumberOfLostFrames = 100;
 		static const int            cStatusMessageMaxLen = MAX_PATH * 2;
 		static const int            cTimeDisplayInterval = 10;
+		
+		//added color portion
+		//static const int cColorWidth = 1920;
+		//static const int cColorHeight = 1080;
+
 
 	public:
 
@@ -66,7 +77,8 @@ namespace basicgraphics {
 
 		// Depth reader
 		IDepthFrameReader*          m_pDepthFrameReader;
-
+		//Color reader
+		//IColorFrameReader*			 m_pColorFrameReader;
 		UINT                         m_cDepthWidth;
 		UINT                         m_cDepthHeight;
 		UINT                         m_cDepthImagePixels;
@@ -111,7 +123,7 @@ namespace basicgraphics {
 		void                        ProcessDepth();
 
 
-		HRESULT	 WriteBinarySTLMeshFile(INuiFusionMesh *mesh, std::string filename, bool flipYZ);
+		HRESULT	 WriteAsciiObjMeshFile(INuiFusionMesh *mesh, std::string filename, bool flipYZ);
 
 		/// <summary>
 		/// Reset the reconstruction camera pose and clear the volume.
@@ -122,7 +134,9 @@ namespace basicgraphics {
 		/// <summary>
 		/// The Kinect Fusion Reconstruction Volume
 		/// </summary>
-		INuiFusionReconstruction*   m_pVolume;
+				INuiFusionReconstruction*   m_pVolume;
+		///if use with color
+	//	INuiFusionColorReconstruction* m_pVolume;
 
 		/// <summary>
 		/// The Kinect Fusion Volume Parameters
@@ -174,7 +188,7 @@ namespace basicgraphics {
 		/// </summary>
 		int                         m_cLostFrameCounter;
 		bool                        m_bTrackingFailed;
-
+		bool                        m_bSavingMesh;
 		/// <summary>
 		/// Parameter to turn automatic reset of the reconstruction when camera tracking is lost on or off.
 		/// Set to true in the constructor to enable auto reset on cResetOnNumberOfLostFrames lost frames,
@@ -219,6 +233,16 @@ namespace basicgraphics {
 		/// when the majority of a small volume is inside this distance.
 		/// </summary>
 		bool                        m_bTranslateResetPoseByMinDepthThreshold;
+
+		//HRESULT exportMesh(const std::string &filename, INuiFusionMesh* mesh);
+		//void appendChildToParentNode(aiNode *pParent, aiNode *pChild);
+		std::shared_ptr <Assimp::Exporter> _exporter;
+		///color portion
+		//NUI_FUSION_IMAGE_FRAME*     m_pColorImage;
+		//NUI_FUSION_IMAGE_FRAME*     m_pResampledColorImageDepthAligned;
+		//ColorSpacePoint*            m_pColorCoordinates;
+		//NUI_FUSION_IMAGE_FRAME*     m_pResampledColorImage;
+		//NUI_FUSION_IMAGE_FRAME*     m_pCapturedSurfaceColor;
 
 
 	};
