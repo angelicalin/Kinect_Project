@@ -51,8 +51,12 @@ namespace basicgraphics {
 		static const int            cTimeDisplayInterval = 10;
 		
 		//added color portion
-		//static const int cColorWidth = 1920;
-		//static const int cColorHeight = 1080;
+		static const int cColorWidth = 1920;
+		static const int cColorHeight = 1080;
+
+		static const int            cVisibilityTestQuantShift = 2; // shift by 2 == divide by 4
+		static const UINT16         cDepthVisibilityTestThreshold = 50; //50 mm
+
 
 
 	public:
@@ -78,7 +82,7 @@ namespace basicgraphics {
 		// Depth reader
 		IDepthFrameReader*          m_pDepthFrameReader;
 		//Color reader
-		//IColorFrameReader*			 m_pColorFrameReader;
+		IColorFrameReader*			 m_pColorFrameReader;
 		UINT                         m_cDepthWidth;
 		UINT                         m_cDepthHeight;
 		UINT                         m_cDepthImagePixels;
@@ -134,9 +138,9 @@ namespace basicgraphics {
 		/// <summary>
 		/// The Kinect Fusion Reconstruction Volume
 		/// </summary>
-				INuiFusionReconstruction*   m_pVolume;
+	//			INuiFusionReconstruction*   m_pVolume;
 		///if use with color
-	//	INuiFusionColorReconstruction* m_pVolume;
+		INuiFusionColorReconstruction* m_pVolume;
 
 		/// <summary>
 		/// The Kinect Fusion Volume Parameters
@@ -236,14 +240,17 @@ namespace basicgraphics {
 
 		//HRESULT exportMesh(const std::string &filename, INuiFusionMesh* mesh);
 		//void appendChildToParentNode(aiNode *pParent, aiNode *pChild);
-		std::shared_ptr <Assimp::Exporter> _exporter;
-		///color portion
-		//NUI_FUSION_IMAGE_FRAME*     m_pColorImage;
-		//NUI_FUSION_IMAGE_FRAME*     m_pResampledColorImageDepthAligned;
-		//ColorSpacePoint*            m_pColorCoordinates;
-		//NUI_FUSION_IMAGE_FRAME*     m_pResampledColorImage;
-		//NUI_FUSION_IMAGE_FRAME*     m_pCapturedSurfaceColor;
+		//std::shared_ptr <Assimp::Exporter> _exporter;
+		//color portion
+		NUI_FUSION_IMAGE_FRAME*     m_pColorImage;
+		NUI_FUSION_IMAGE_FRAME*     m_pResampledColorImageDepthAligned;
+		ColorSpacePoint*            m_pColorCoordinates;
+		NUI_FUSION_IMAGE_FRAME*     m_pResampledColorImage;
+		NUI_FUSION_IMAGE_FRAME*     m_pCapturedSurfaceColor;
+		UINT16* m_pDepthVisibilityTestMap;
 
+		HRESULT CopyColor(IColorFrame* pColorFrame);
+		HRESULT MapColorToDepth();
 
 	};
 }

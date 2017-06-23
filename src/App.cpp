@@ -45,13 +45,14 @@ namespace basicgraphics {
 		m_pDepthFrameReader(NULL),
 		m_coordinateMappingChangedEvent(NULL),
 		m_bHaveValidCameraParameters(false),
-		m_bSavingMesh(false)
+		m_bSavingMesh(false),
 		///added color portion
-		/*m_pColorCoordinates(nullptr),
+		m_pColorCoordinates(nullptr),
 		m_pColorImage(nullptr),
+		m_pDepthVisibilityTestMap(nullptr),
 		m_pResampledColorImage(nullptr),
 		m_pResampledColorImageDepthAligned(nullptr),
-		m_pCapturedSurfaceColor(nullptr)*/
+		m_pCapturedSurfaceColor(nullptr)
 	
 	{
 
@@ -179,16 +180,16 @@ namespace basicgraphics {
 		SAFE_FUSION_RELEASE_IMAGE_FRAME(m_pShadedSurface);
 		SAFE_FUSION_RELEASE_IMAGE_FRAME(m_pPointCloud);
 		SAFE_FUSION_RELEASE_IMAGE_FRAME(m_pDepthFloatImage);
-	/*	
+		
 		SAFE_FUSION_RELEASE_IMAGE_FRAME(m_pColorImage);
 		SAFE_FUSION_RELEASE_IMAGE_FRAME(m_pResampledColorImage);
 		SAFE_FUSION_RELEASE_IMAGE_FRAME(m_pResampledColorImageDepthAligned);
 		SAFE_FUSION_RELEASE_IMAGE_FRAME(m_pCapturedSurfaceColor);
-*/
+
 		// done with depth frame reader
 		SafeRelease(m_pDepthFrameReader);
 		//done with color frame reader
-	//	SafeRelease(m_pColorFrameReader);
+		SafeRelease(m_pColorFrameReader);
 
 		// Clean up Kinect
 		if (m_pNuiSensor)
@@ -207,9 +208,61 @@ namespace basicgraphics {
 		SAFE_DELETE_ARRAY(m_pDepthRGBX);
 
 		//Clean up the color coordinate array
-		//SAFE_DELETE_ARRAY(m_pColorCoordinates);
+		SAFE_DELETE_ARRAY(m_pColorCoordinates);
+		SAFE_DELETE_ARRAY(m_pDepthVisibilityTestMap);
 	}
 
+	void App::onRenderGraphics() {
+
+		Update();
+
+		glm::mat4 view = glm::lookAt(glm::vec3(0, 0, 4), glm::vec3(0, 0, 0), glm::vec3(0, 1, 0));
+
+		// Setup the projection matrix so that things are rendered in perspective
+		glm::vec3 eye_world = glm::vec3(glm::column(glm::inverse(view), 3));
+		glm::mat4 projection = glm::perspective(glm::radians(45.0f), (GLfloat)_windowWidth / (GLfloat)_windowHeight, 0.1f, 500.0f);
+		shader.compileShader("texture.vert", GLSLShader::VERTEX);
+		shader.compileShader("texture.frag", GLSLShader::FRAGMENT);
+		// Update shader variables
+		shader.link();
+		shader.use();
+		shader.setUniform("view_mat", view);
+		shader.setUniform("projection_mat", projection);
+		shader.setUniform("model_mat", mat4(1.0));
+		shader.setUniform("eye_world", eye_world);
+
+		if (!m_bSavingMesh) {
+			kinectVision->update(m_pShadedSurface->pFrameBuffer->pBits, GL_RGBA, GL_UNSIGNED_BYTE);
+		}
+		_mesh->draw(shader);
+	}
+	
+	void App::onEvent(shared_ptr<Event> event)
+	{
+		string name = event->getName();
+
+		if (name == "kbd_UP_down" || name == "kbd_UP_repeat") {
+			ResetReconstruction();
+		}
+		if (name == "kbd_S_down") {
+			m_bSavingMesh = true;
+			INuiFusionMesh* mesh = nullptr;
+			HRESULT hr = m_pVolume->CalculateMesh(1, &mesh);
+			if (SUCCEEDED(hr)) {
+				hr = WriteAsciiObjMeshFile(mesh, "testboop", false);
+				if (SUCCEEDED(hr)) {
+					cout << "Done" << endl;
+				}
+				else {
+					cout << "file saving failed" << endl;
+				}
+			}
+			else {
+				cout << "Mesh creation failed" << endl;
+			}
+			m_bSavingMesh = false;
+		}
+	}
 	/// <summary>
 	/// Main processing function
 	/// </summary>
@@ -298,7 +351,7 @@ namespace basicgraphics {
 		{
 			// Initialize the Kinect and get the depth reader
 			IDepthFrameSource* pDepthFrameSource = NULL;
-			//IColorFrameSource* pColorFrameSource = NULL;
+			IColorFrameSource* pColorFrameSource = NULL;
 
 			hr = m_pNuiSensor->Open();
 
@@ -321,18 +374,18 @@ namespace basicgraphics {
 			{
 				hr = pDepthFrameSource->OpenReader(&m_pDepthFrameReader);
 			}
-		/*	if (SUCCEEDED(hr))
+			if (SUCCEEDED(hr))
 			{
 				hr = m_pNuiSensor->get_ColorFrameSource(&pColorFrameSource);
-			}*/
+			}
 
-			/*if (SUCCEEDED(hr))
+			if (SUCCEEDED(hr))
 			{
 				hr = pColorFrameSource->OpenReader(&m_pColorFrameReader);
-			}*/
+			}
 
 			SafeRelease(pDepthFrameSource);
-			//SafeRelease(pColorFrameSource);
+			SafeRelease(pColorFrameSource);
 		}
 
 		if (nullptr == m_pNuiSensor || FAILED(hr))
@@ -474,10 +527,10 @@ namespace basicgraphics {
 		UpdateIntrinsics(m_pPointCloud, &m_cameraParameters);
 		UpdateIntrinsics(m_pShadedSurface, &m_cameraParameters);
 		//COLOR portion
-		/*UpdateIntrinsics(m_pColorImage, &m_cameraParameters);
+		UpdateIntrinsics(m_pColorImage, &m_cameraParameters);
 		UpdateIntrinsics(m_pResampledColorImage, &m_cameraParameters);
 		UpdateIntrinsics(m_pResampledColorImageDepthAligned, &m_cameraParameters);
-		UpdateIntrinsics(m_pCapturedSurfaceColor, &m_cameraParameters);*/
+		UpdateIntrinsics(m_pCapturedSurfaceColor, &m_cameraParameters);
 
 		if (nullptr == m_pDepthDistortionMap)
 		{
@@ -485,9 +538,14 @@ namespace basicgraphics {
 			return E_OUTOFMEMORY;
 		}
 
-	/*	if (nullptr == m_pColorCoordinates){
+		if (nullptr == m_pColorCoordinates){
 			cout << "Failed to initialize Kinect Fusion color image coordinate buffer" << endl;
-		}*/
+		}
+		if (nullptr == m_pDepthVisibilityTestMap)
+		{
+			cout << "Failed to initialize Kinect Fusion depth points visibility test buffer." << endl;
+			return E_OUTOFMEMORY;
+		}
 
 		hr = SetupUndistortion();
 		return hr;
@@ -534,18 +592,18 @@ namespace basicgraphics {
 		}
 
 		// Create the Kinect Fusion Reconstruction Volume
-		hr = NuiFusionCreateReconstruction(
-			&m_reconstructionParams,
-			m_processorType, m_deviceIndex,
-			&m_worldToCameraTransform,
-			&m_pVolume);
-
-		//Create a color volume
-		//hr = NuiFusionCreateColorReconstruction(
+		//hr = NuiFusionCreateReconstruction(
 		//	&m_reconstructionParams,
 		//	m_processorType, m_deviceIndex,
 		//	&m_worldToCameraTransform,
 		//	&m_pVolume);
+
+		//Create a color volume
+		hr = NuiFusionCreateColorReconstruction(
+			&m_reconstructionParams,
+			m_processorType, m_deviceIndex,
+			&m_worldToCameraTransform,
+			&m_pVolume);
 
 		if (FAILED(hr))
 		{
@@ -600,17 +658,17 @@ namespace basicgraphics {
 			return hr;
 		}
 
-		////Frame generated from the raw color input of Kinect
-		//if (FAILED(hr = NuiFusionCreateImageFrame(NUI_FUSION_IMAGE_TYPE_COLOR, cColorWidth, cColorHeight, &m_cameraParameters, &m_pColorImage))){
-		//	cout << "Failed to initialize Kinect Fusion image." << endl;
-		//	return hr;
-		//}
+		//Frame generated from the raw color input of Kinect
+		if (FAILED(hr = NuiFusionCreateImageFrame(NUI_FUSION_IMAGE_TYPE_COLOR, cColorWidth, cColorHeight, &m_cameraParameters, &m_pColorImage))){
+			cout << "Failed to initialize Kinect Fusion image." << endl;
+			return hr;
+		}
 
-		////Frame re-sampled from the color input of Kinect
-		//if (FAILED(hr = NuiFusionCreateImageFrame(NUI_FUSION_IMAGE_TYPE_COLOR, m_cDepthWidth, m_cDepthHeight, &m_cameraParameters, &m_pResampledColorImageDepthAligned))) {
-		//	cout << "Failed to initialize Kinect Fusion image." << endl;
-		//	return hr;
-		//}
+		//Frame re-sampled from the color input of Kinect
+		if (FAILED(hr = NuiFusionCreateImageFrame(NUI_FUSION_IMAGE_TYPE_COLOR, m_cDepthWidth, m_cDepthHeight, &m_cameraParameters, &m_pResampledColorImageDepthAligned))) {
+			cout << "Failed to initialize Kinect Fusion image." << endl;
+			return hr;
+		}
 
 		// Create images to raycast the Reconstruction Volume
 		hr = NuiFusionCreateImageFrame(NUI_FUSION_IMAGE_TYPE_POINT_CLOUD, m_cDepthWidth, m_cDepthHeight, &m_cameraParameters, &m_pPointCloud);
@@ -653,12 +711,21 @@ namespace basicgraphics {
 			return E_OUTOFMEMORY;
 		}
 
-		//SAFE_DELETE_ARRAY(m_pColorCoordinates);
-		//m_pColorCoordinates = new(std::nothrow)ColorSpacePoint[m_cDepthHeight*m_cDepthWidth];
-		//if (nullptr == m_pColorCoordinates){
-		//	cout<<"Failed to initialize Kinect Fusion color image coordinate buffer."<<endl;
-		//	return E_OUTOFMEMORY;
-		//}
+		SAFE_DELETE_ARRAY(m_pColorCoordinates);
+		m_pColorCoordinates = new(std::nothrow)ColorSpacePoint[m_cDepthHeight*m_cDepthWidth];
+		if (nullptr == m_pColorCoordinates){
+			cout<<"Failed to initialize Kinect Fusion color image coordinate buffer."<<endl;
+			return E_OUTOFMEMORY;
+		}
+
+		SAFE_DELETE_ARRAY(m_pDepthVisibilityTestMap);
+		m_pDepthVisibilityTestMap = new(std::nothrow) UINT16[(cColorWidth >> cVisibilityTestQuantShift) * (cColorHeight >> cVisibilityTestQuantShift)];
+
+		if (nullptr == m_pDepthVisibilityTestMap)
+		{
+			cout<<"Failed to initialize Kinect Fusion depth points visibility test buffer."<<endl;
+			return E_OUTOFMEMORY;
+		}
 
 
 		// If we have valid parameters, let's go ahead and use them.
@@ -711,8 +778,17 @@ namespace basicgraphics {
 		////////////////////////////////////////////////////////
 		// Depth to DepthFloat
 
-		// Convert the pixels describing extended depth as unsigned short type in millimeters to depth
-		// as floating point type in meters.
+		// Convert the pixels describing extended depth as unsigned short type in millimeters to depth as floating point type in meters.
+		/*Converts Kinect depth frames in unsigned short format to depth frames in float format representing distance from the camera in meters (parallel to the optical center axis).
+		Note: depthImageData and depthFloatFrame must be the same pixel resolution and equal to depthImageDataWidth by depthImageDataHeight.
+		The min and max depth clip values enable clipping of the input data, for example, to help isolate particular objects or surfaces to be reconstructed. 
+		Note that the thresholds return different values when a depth pixel is outside the threshold - pixels inside minDepthClip will will be returned as 0 and ignored in processing, 
+		whereas pixels beyond maxDepthClip will be set to 1000 to signify a valid depth ray with depth beyond the set threshold. 
+		Setting this far- distance flag is important for reconstruction integration in situations where the camera is static or does not move significantly, 
+		as it enables any voxels closer to the camera along this ray to be culled instead of persisting (as would happen if the pixels were simply set to 0 and ignored in processing). 
+		Note that when reconstructing large real-world size volumes, be sure to set large maxDepthClip distances, as when the camera moves around, 
+		any voxels in view which go beyond this threshold distance from the camera will be removed.*/
+
 		hr = m_pVolume->DepthToDepthFloatFrame(m_pDepthImagePixelBuffer, m_cDepthImagePixels * sizeof(UINT16), m_pDepthFloatImage, m_fMinDepthThreshold, m_fMaxDepthThreshold, m_bMirrorDepthFrame);
 
 		if (FAILED(hr))
@@ -728,6 +804,14 @@ namespace basicgraphics {
 		// This will create memory on the GPU, upload the image, run camera tracking and integrate the
 		// data into the Reconstruction Volume if successful. Note that passing nullptr as the final 
 		// parameter will use and update the internal camera pose.
+
+	/*A high-level function to process a depth frame through the Kinect Fusion pipeline.
+	Specifically, this performs processing equivalent to the following functions for each frame:
+	1. AlignDepthFloatToReconstruction
+	2. IntegrateFrame
+	After this call completes, if a visible output image of the reconstruction is required, the user can call CalculatePointCloud and then ShadePointCloud. 
+	The maximum image resolution supported in this function is 640x480.
+	If there is a tracking error in the AlignDepthFloatToReconstruction stage, no depth data integration will be performed, and the camera pose will remain unchanged.*/
 		hr = m_pVolume->ProcessFrame(m_pDepthFloatImage, NUI_FUSION_DEFAULT_ALIGN_ITERATION_COUNT, m_cMaxIntegrationWeight, nullptr, &m_worldToCameraTransform);
 
 		// Test to see if camera tracking failed. 
@@ -779,6 +863,9 @@ namespace basicgraphics {
 		// CalculatePointCloud
 
 		// Raycast all the time, even if we camera tracking failed, to enable us to visualize what is happening with the system
+		/*Calculates a point cloud by raycasting into the reconstruction volume, 
+		returning the point cloud containing 3D points and normals of the zero-crossing dense surface at every visible pixel in the image 
+		from the specified camera pose and color visualization image.*/
 		hr = m_pVolume->CalculatePointCloud(m_pPointCloud, &m_worldToCameraTransform);
 
 		if (FAILED(hr))
@@ -790,6 +877,22 @@ namespace basicgraphics {
 		////////////////////////////////////////////////////////
 		// ShadePointCloud and render
 
+		/*
+		Produces two shaded images from the point cloud frame, based on point position and surface normal.
+		
+		NUI_FUSION_IMAGE_FRAME pPointCloudFrame : The point cloud frame to shade.
+		
+		Matrix4 pWorldToCameraTransform : The transform used to determine the perspective of the shaded point cloud relative to the world. 
+		This affects the application of the worldToRGBTramsform to the point cloud. 
+		To achieve consistent results, this should match the world-to-camera transform that was used to create the point cloud frame.
+		
+		Matrix4 pWorldToBGRTransform : The transform that defines a mapping from position to RGB color space. 
+		The X, Y, Z components of the point positions transformed by this matrix are used as the R, G, B values in the rendered frame.
+		
+		NUI_FUSION_IMAGE_FRAME pShadedSurfaceFrame : A color image frame that receives the shaded frame which includes lighting based on the surface normal.
+		
+		NUI_FUSION_IMAGE_FRAME pShadedSurfaceNormalsFrame :  A color image frame that receives the shaded frame.
+		*/
 		hr = NuiFusionShadePointCloud(m_pPointCloud, &m_worldToCameraTransform, nullptr, m_pShadedSurface, nullptr);
 
 		if (FAILED(hr))
@@ -799,16 +902,7 @@ namespace basicgraphics {
 		}
 
 		// Draw the shaded raycast volume image
-		BYTE * pBuffer = m_pShadedSurface->pFrameBuffer->pBits;
-
-	//	cout << m_pShadedSurface->width << ", " << m_pShadedSurface->height<<", "<<m_cDepthWidth<<", "<< m_cDepthHeight << endl;
-
-		// Draw the data
-		//TODO: update your texture here
-		//m_pDrawDepth->Draw(pBuffer, m_cDepthWidth * m_cDepthHeight * cBytesPerPixel);
-
-		////////////////////////////////////////////////////////
-		// Periodically Display Fps
+		//BYTE * pBuffer = m_pShadedSurface->pFrameBuffer->pBits;
 
 		// Update frame counter
 		m_cFrameCounter++;
@@ -867,60 +961,7 @@ namespace basicgraphics {
 		return hr;
 	}
 
-	void App::onRenderGraphics() {
 
-		Update();
-
-		glm::mat4 view = glm::lookAt(glm::vec3(0, 0, 4), glm::vec3(0, 0, 0), glm::vec3(0, 1, 0));
-
-		// Setup the projection matrix so that things are rendered in perspective
-		glm::vec3 eye_world = glm::vec3(glm::column(glm::inverse(view), 3));
-		glm::mat4 projection = glm::perspective(glm::radians(45.0f), (GLfloat)_windowWidth / (GLfloat)_windowHeight, 0.1f, 500.0f);
-		shader.compileShader("texture.vert", GLSLShader::VERTEX);
-		shader.compileShader("texture.frag", GLSLShader::FRAGMENT);
-		// Update shader variables
-		shader.link();
-		shader.use();
-		shader.setUniform("view_mat", view);
-		shader.setUniform("projection_mat", projection);
-		shader.setUniform("model_mat", mat4(1.0));
-		shader.setUniform("eye_world", eye_world);
-
-		if (!m_bSavingMesh) {
-			kinectVision->update(m_pShadedSurface->pFrameBuffer->pBits, GL_RGBA, GL_UNSIGNED_BYTE);
-		}
-		_mesh->draw(shader);
-	}
-
-
-	void App::onEvent(shared_ptr<Event> event)
-	{
-		string name = event->getName();
-
-		if (name == "kbd_UP_down" || name == "kbd_UP_repeat") {
-			ResetReconstruction();
-		}
-		if (name == "kbd_S_down") {
-			m_bSavingMesh = true;
-			INuiFusionMesh* mesh = nullptr;
-			HRESULT hr = m_pVolume->CalculateMesh(1,&mesh);
-			if (SUCCEEDED(hr)) {
-				hr = WriteAsciiObjMeshFile(mesh, "testboop", false );
-				if (SUCCEEDED(hr)) {
-					cout << "Done" << endl;
-				}
-				else {
-					cout << "file saving failed" << endl;
-				}
-			}
-			else {
-				cout << "Mesh creation failed" << endl;
-			}
-			m_bSavingMesh = false;
-		}
-	}
-
-	
 
 
 
@@ -1049,7 +1090,6 @@ namespace basicgraphics {
 
 		return hr;
 	}
-
 
 	/*HRESULT App::exportMesh(const std::string &filename, INuiFusionMesh *mesh) {
 		
@@ -1207,6 +1247,209 @@ namespace basicgraphics {
 		}
 		pParent->mChildren[pParent->mNumChildren - 1] = pChild;
 	}*/
+
+	/// <summary>
+	/// Get Color data
+	/// </summary>
+	/// <param name="imageFrame">The color image frame to copy.</param>
+	/// <returns>S_OK on success, otherwise failure code</returns>
+HRESULT App::CopyColor(IColorFrame* pColorFrame)
+{
+	HRESULT hr = S_OK;
+
+	if (nullptr == m_pColorImage)
+	{
+		cout<<"Error copying color texture pixels."<< endl;
+		return E_FAIL;
+	}
+
+	NUI_FUSION_BUFFER *destColorBuffer = m_pColorImage->pFrameBuffer;
+
+	if (nullptr == pColorFrame || nullptr == destColorBuffer)
+	{
+		return E_NOINTERFACE;
+	}
+
+	// Copy the color pixels so we can return the image frame
+	hr = pColorFrame->CopyConvertedFrameDataToArray(cColorWidth * cColorHeight * sizeof(RGBQUAD), destColorBuffer->pBits, ColorImageFormat_Bgra);
+
+	if (FAILED(hr))
+	{
+		cout<<"Error copying color texture pixels."<<endl;
+		hr = E_FAIL;
+	}
+
+	return hr;
+}
+
+/// <summary>
+/// Adjust color to the same space as depth
+/// </summary>
+/// <returns>S_OK for success, or failure code</returns>
+HRESULT App::MapColorToDepth()
+{
+	HRESULT hr = S_OK;
+
+	if (nullptr == m_pColorImage || nullptr == m_pResampledColorImageDepthAligned
+		|| nullptr == m_pColorCoordinates || nullptr == m_pDepthVisibilityTestMap)
+	{
+		return E_FAIL;
+	}
+
+	NUI_FUSION_BUFFER *srcColorBuffer = m_pColorImage->pFrameBuffer;
+	NUI_FUSION_BUFFER *destColorBuffer = m_pResampledColorImageDepthAligned->pFrameBuffer;
+
+	if (nullptr == srcColorBuffer || nullptr == destColorBuffer)
+	{
+		cout << "Error accessing color textures." << endl;
+		return E_NOINTERFACE;
+	}
+
+	if (FAILED(hr) || srcColorBuffer->Pitch == 0)
+	{
+		cout<<"Error accessing color texture pixels."<<endl;
+		return  E_FAIL;
+	}
+
+	if (FAILED(hr) || destColorBuffer->Pitch == 0)
+	{
+		cout << "Error accessing color texture pixels."<<endl;
+		return  E_FAIL;
+	}
+
+	int *rawColorData = reinterpret_cast<int*>(srcColorBuffer->pBits);
+	int *colorDataInDepthFrame = reinterpret_cast<int*>(destColorBuffer->pBits);
+
+	// Get the coordinates to convert color to depth space
+	hr = m_pMapper->MapDepthFrameToColorSpace(NUI_DEPTH_RAW_WIDTH * NUI_DEPTH_RAW_HEIGHT, m_pDepthRawPixelBuffer,
+		NUI_DEPTH_RAW_WIDTH * NUI_DEPTH_RAW_HEIGHT, m_pColorCoordinates);
+
+	if (FAILED(hr))
+	{
+		return hr;
+	}
+
+	// construct dense depth points visibility test map so we can test for depth points that are invisible in color space
+	const UINT16* const pDepthEnd = m_pDepthRawPixelBuffer + NUI_DEPTH_RAW_WIDTH * NUI_DEPTH_RAW_HEIGHT;
+	const ColorSpacePoint* pColorPoint = m_pColorCoordinates;
+	const UINT testMapWidth = UINT(cColorWidth >> cVisibilityTestQuantShift);
+	const UINT testMapHeight = UINT(cColorHeight >> cVisibilityTestQuantShift);
+	ZeroMemory(m_pDepthVisibilityTestMap, testMapWidth * testMapHeight * sizeof(UINT16));
+	for (const UINT16* pDepth = m_pDepthRawPixelBuffer; pDepth < pDepthEnd; pDepth++, pColorPoint++)
+	{
+		const UINT x = UINT(pColorPoint->X + 0.5f) >> cVisibilityTestQuantShift;
+		const UINT y = UINT(pColorPoint->Y + 0.5f) >> cVisibilityTestQuantShift;
+		if (x < testMapWidth && y < testMapHeight)
+		{
+			const UINT idx = y * testMapWidth + x;
+			const UINT16 oldDepth = m_pDepthVisibilityTestMap[idx];
+			const UINT16 newDepth = *pDepth;
+			if (!oldDepth || oldDepth > newDepth)
+			{
+				m_pDepthVisibilityTestMap[idx] = newDepth;
+			}
+		}
+	}
+
+
+	// Loop over each row and column of the destination color image and copy from the source image
+	// Note that we could also do this the other way, and convert the depth pixels into the color space, 
+	// avoiding black areas in the converted color image and repeated color images in the background
+	// However, then the depth would have radial and tangential distortion like the color camera image,
+	// which is not ideal for Kinect Fusion reconstruction.
+
+	if (m_bMirrorDepthFrame)
+	{
+		Concurrency::parallel_for(0u, m_cDepthHeight, [&](UINT y)
+		{
+			const UINT depthWidth = m_cDepthWidth;
+			const UINT depthImagePixels = m_cDepthImagePixels;
+			const UINT colorHeight = cColorHeight;
+			const UINT colorWidth = cColorWidth;
+			const UINT testMapWidth = UINT(colorWidth >> cVisibilityTestQuantShift);
+
+			UINT destIndex = y * depthWidth;
+			for (UINT x = 0; x < depthWidth; ++x, ++destIndex)
+			{
+				int pixelColor = 0;
+				const UINT mappedIndex = m_pDepthDistortionLT[destIndex];
+				if (mappedIndex < depthImagePixels)
+				{
+					// retrieve the depth to color mapping for the current depth pixel
+					const ColorSpacePoint colorPoint = m_pColorCoordinates[mappedIndex];
+
+					// make sure the depth pixel maps to a valid point in color space
+					const UINT colorX = (UINT)(colorPoint.X + 0.5f);
+					const UINT colorY = (UINT)(colorPoint.Y + 0.5f);
+					if (colorX < colorWidth && colorY < colorHeight)
+					{
+						const UINT16 depthValue = m_pDepthRawPixelBuffer[mappedIndex];
+						const UINT testX = colorX >> cVisibilityTestQuantShift;
+						const UINT testY = colorY >> cVisibilityTestQuantShift;
+						const UINT testIdx = testY * testMapWidth + testX;
+						const UINT16 depthTestValue = m_pDepthVisibilityTestMap[testIdx];
+						_ASSERT(depthValue >= depthTestValue);
+						if (depthValue - depthTestValue < cDepthVisibilityTestThreshold)
+						{
+							// calculate index into color array
+							const UINT colorIndex = colorX + (colorY * colorWidth);
+							pixelColor = rawColorData[colorIndex];
+						}
+					}
+				}
+				colorDataInDepthFrame[destIndex] = pixelColor;
+			}
+		});
+	}
+	else
+	{
+		Concurrency::parallel_for(0u, m_cDepthHeight, [&](UINT y)
+		{
+			const UINT depthWidth = m_cDepthWidth;
+			const UINT depthImagePixels = m_cDepthImagePixels;
+			const UINT colorHeight = cColorHeight;
+			const UINT colorWidth = cColorWidth;
+			const UINT testMapWidth = UINT(colorWidth >> cVisibilityTestQuantShift);
+
+			// Horizontal flip the color image as the standard depth image is flipped internally in Kinect Fusion
+			// to give a viewpoint as though from behind the Kinect looking forward by default.
+			UINT destIndex = y * depthWidth;
+			UINT flipIndex = destIndex + depthWidth - 1;
+			for (UINT x = 0; x < depthWidth; ++x, ++destIndex, --flipIndex)
+			{
+				int pixelColor = 0;
+				const UINT mappedIndex = m_pDepthDistortionLT[destIndex];
+				if (mappedIndex < depthImagePixels)
+				{
+					// retrieve the depth to color mapping for the current depth pixel
+					const ColorSpacePoint colorPoint = m_pColorCoordinates[mappedIndex];
+
+					// make sure the depth pixel maps to a valid point in color space
+					const UINT colorX = (UINT)(colorPoint.X + 0.5f);
+					const UINT colorY = (UINT)(colorPoint.Y + 0.5f);
+					if (colorX < colorWidth && colorY < colorHeight)
+					{
+						const UINT16 depthValue = m_pDepthRawPixelBuffer[mappedIndex];
+						const UINT testX = colorX >> cVisibilityTestQuantShift;
+						const UINT testY = colorY >> cVisibilityTestQuantShift;
+						const UINT testIdx = testY * testMapWidth + testX;
+						const UINT16 depthTestValue = m_pDepthVisibilityTestMap[testIdx];
+						_ASSERT(depthValue >= depthTestValue);
+						if (depthValue - depthTestValue < cDepthVisibilityTestThreshold)
+						{
+							// calculate index into color array
+							const UINT colorIndex = colorX + (colorY * colorWidth);
+							pixelColor = rawColorData[colorIndex];
+						}
+					}
+				}
+				colorDataInDepthFrame[flipIndex] = pixelColor;
+			}
+		});
+	}
+
+	return hr;
+}
 }
 //namespace
 
