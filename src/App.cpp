@@ -52,8 +52,9 @@ namespace basicgraphics {
 		m_pDepthVisibilityTestMap(nullptr),
 		m_pResampledColorImage(nullptr),
 		m_pResampledColorImageDepthAligned(nullptr),
-		m_pCapturedSurfaceColor(nullptr)
-	
+		m_pCapturedSurfaceColor(nullptr),
+		m_pDepthRawPixelBuffer(nullptr),
+		m_bCaptureColor(true)
 	{
 
 		// Get the depth frame size from the NUI_IMAGE_RESOLUTION enum
@@ -200,12 +201,13 @@ namespace basicgraphics {
 
 		// clean up the depth pixel array
 		SAFE_DELETE_ARRAY(m_pDepthImagePixelBuffer);
-
+		SAFE_DELETE_ARRAY(m_pDepthRawPixelBuffer);
 		SAFE_DELETE_ARRAY(m_pDepthDistortionMap);
 		SAFE_DELETE_ARRAY(m_pDepthDistortionLT);
 
 		// done with depth pixel data
 		SAFE_DELETE_ARRAY(m_pDepthRGBX);
+		
 
 		//Clean up the color coordinate array
 		SAFE_DELETE_ARRAY(m_pColorCoordinates);
@@ -246,7 +248,7 @@ namespace basicgraphics {
 		}
 		if (name == "kbd_S_down") {
 			m_bSavingMesh = true;
-			INuiFusionMesh* mesh = nullptr;
+			INuiFusionColorMesh* mesh = nullptr;
 			HRESULT hr = m_pVolume->CalculateMesh(1, &mesh);
 			if (SUCCEEDED(hr)) {
 				hr = WriteAsciiObjMeshFile(mesh, "testboop", false);
@@ -317,7 +319,8 @@ namespace basicgraphics {
 
 			if (SUCCEEDED(hr))
 			{
-				//copy and remap depth
+				//copy and remap 
+
 				const UINT bufferLength = m_cDepthImagePixels;
 				UINT16 * pDepth = m_pDepthImagePixelBuffer;
 				for (UINT i = 0; i < bufferLength; i++, pDepth++)
@@ -331,6 +334,28 @@ namespace basicgraphics {
 		}
 
 		SafeRelease(pDepthFrame);
+		bool colorSynchronized = false;   // assume we are not synchronized to start with
+
+		if (m_bCaptureColor)
+		{
+
+			IColorFrame* pColorFrame;
+			hr = m_pColorFrameReader->AcquireLatestFrame(&pColorFrame);
+
+			if (FAILED(hr))
+			{
+				// Here we just do not integrate color rather than reporting an error
+				colorSynchronized = false;
+			}
+			else
+			{
+				if (SUCCEEDED(hr))
+				{
+					CopyColor(pColorFrame);
+				}
+				SafeRelease(pColorFrame);
+			}
+		}
 	}
 
 	/// <summary>
@@ -546,6 +571,11 @@ namespace basicgraphics {
 			cout << "Failed to initialize Kinect Fusion depth points visibility test buffer." << endl;
 			return E_OUTOFMEMORY;
 		}
+		if (nullptr == m_pDepthRawPixelBuffer)
+		{
+			cout << "Failed to initialize Kinect Fusion raw depth image pixel buffer."<<endl;
+			return E_OUTOFMEMORY;
+		}
 
 		hr = SetupUndistortion();
 		return hr;
@@ -670,6 +700,14 @@ namespace basicgraphics {
 			return hr;
 		}
 
+		// Frame generated from the raw color input of Kinect for use in the camera pose finder.
+		// Note color will be down-sampled to the depth size if depth and color capture resolutions differ.
+		if (FAILED(hr = NuiFusionCreateImageFrame(NUI_FUSION_IMAGE_TYPE_COLOR, m_cDepthWidth, m_cDepthHeight, &m_cameraParameters, &m_pResampledColorImage)))
+		{
+			cout << "Failed to initialize Kinect Fusion image." << endl;
+			return hr;
+		}
+
 		// Create images to raycast the Reconstruction Volume
 		hr = NuiFusionCreateImageFrame(NUI_FUSION_IMAGE_TYPE_POINT_CLOUD, m_cDepthWidth, m_cDepthHeight, &m_cameraParameters, &m_pPointCloud);
 		if (FAILED(hr))
@@ -685,6 +723,12 @@ namespace basicgraphics {
 			cout << "Failed to initialize Kinect Fusion image." << endl;
 			return hr;
 		}
+		// Image of the raycast Volume with the captured color to display
+		hr = NuiFusionCreateImageFrame(NUI_FUSION_IMAGE_TYPE_COLOR, m_cDepthWidth, m_cDepthHeight, &m_cameraParameters, &m_pCapturedSurfaceColor);
+		if (FAILED(hr))
+		{
+			return hr;
+		}
 
 		_ASSERT(m_pDepthImagePixelBuffer == nullptr);
 		m_pDepthImagePixelBuffer = new(std::nothrow) UINT16[m_cDepthImagePixels];
@@ -693,6 +737,7 @@ namespace basicgraphics {
 			cout << "Failed to initialize Kinect Fusion depth image pixel buffer." << endl;
 			return hr;
 		}
+
 
 		_ASSERT(m_pDepthDistortionMap == nullptr);
 		m_pDepthDistortionMap = new(std::nothrow) DepthSpacePoint[m_cDepthImagePixels];
@@ -715,6 +760,15 @@ namespace basicgraphics {
 		m_pColorCoordinates = new(std::nothrow)ColorSpacePoint[m_cDepthHeight*m_cDepthWidth];
 		if (nullptr == m_pColorCoordinates){
 			cout<<"Failed to initialize Kinect Fusion color image coordinate buffer."<<endl;
+			return E_OUTOFMEMORY;
+		}
+
+		SAFE_DELETE_ARRAY(m_pDepthRawPixelBuffer);
+		m_pDepthRawPixelBuffer = new(std::nothrow) UINT16[m_cDepthHeight*m_cDepthWidth];
+
+		if (nullptr == m_pDepthRawPixelBuffer)
+		{
+			cout<<"Failed to initialize Kinect Fusion raw depth image pixel buffer."<<endl;
 			return E_OUTOFMEMORY;
 		}
 
@@ -789,7 +843,11 @@ namespace basicgraphics {
 		Note that when reconstructing large real-world size volumes, be sure to set large maxDepthClip distances, as when the camera moves around, 
 		any voxels in view which go beyond this threshold distance from the camera will be removed.*/
 
-		hr = m_pVolume->DepthToDepthFloatFrame(m_pDepthImagePixelBuffer, m_cDepthImagePixels * sizeof(UINT16), m_pDepthFloatImage, m_fMinDepthThreshold, m_fMaxDepthThreshold, m_bMirrorDepthFrame);
+		hr = m_pVolume->DepthToDepthFloatFrame(m_pDepthImagePixelBuffer, 
+				m_cDepthImagePixels * sizeof(UINT16), 
+				m_pDepthFloatImage, m_fMinDepthThreshold,
+				m_fMaxDepthThreshold, 
+				m_bMirrorDepthFrame);
 
 		if (FAILED(hr))
 		{
@@ -812,8 +870,17 @@ namespace basicgraphics {
 	After this call completes, if a visible output image of the reconstruction is required, the user can call CalculatePointCloud and then ShadePointCloud. 
 	The maximum image resolution supported in this function is 640x480.
 	If there is a tracking error in the AlignDepthFloatToReconstruction stage, no depth data integration will be performed, and the camera pose will remain unchanged.*/
-		hr = m_pVolume->ProcessFrame(m_pDepthFloatImage, NUI_FUSION_DEFAULT_ALIGN_ITERATION_COUNT, m_cMaxIntegrationWeight, nullptr, &m_worldToCameraTransform);
-
+		
+		
+		//hr = m_pVolume->ProcessFrame(m_pDepthFloatImage, NUI_FUSION_DEFAULT_ALIGN_ITERATION_COUNT, m_cMaxIntegrationWeight, nullptr, &m_worldToCameraTransform);
+		FLOAT alignmentEnergy = 0;
+		hr = m_pVolume->ProcessFrame(m_pDepthFloatImage,
+			m_pColorImage,
+			NUI_FUSION_DEFAULT_ALIGN_ITERATION_COUNT, 
+			m_cMaxIntegrationWeight, 
+			NUI_FUSION_DEFAULT_COLOR_INTEGRATION_OF_ALL_ANGLES, 
+			&alignmentEnergy, 
+			&m_worldToCameraTransform);
 		// Test to see if camera tracking failed. 
 		// If it did fail, no data integration or raycast for reference points and normals will have taken 
 		//  place, and the internal camera pose will be unchanged.
@@ -858,6 +925,28 @@ namespace basicgraphics {
 			// Set bad tracking message
 			cout << "Kinect Fusion camera tracking failed, automatically reset volume." << endl;
 		}
+		bool integrateData = !m_bTrackingFailed;
+
+		if (integrateData)
+		{
+
+				// Map the color frame to the depth - this fills m_pResampledColorImageDepthAligned
+				MapColorToDepth();
+
+				// Integrate the depth and color data into the volume from the calculated camera pose
+				hr = m_pVolume->IntegrateFrame(
+					m_pDepthFloatImage,
+					m_pResampledColorImageDepthAligned,
+					m_cMaxIntegrationWeight,
+					NUI_FUSION_DEFAULT_COLOR_INTEGRATION_OF_ALL_ANGLES,
+					&m_worldToCameraTransform);
+			}
+
+
+			if (FAILED(hr))
+			{
+				cout<<"Kinect Fusion IntegrateFrame call failed."<<endl;
+			}
 
 		////////////////////////////////////////////////////////
 		// CalculatePointCloud
@@ -866,8 +955,8 @@ namespace basicgraphics {
 		/*Calculates a point cloud by raycasting into the reconstruction volume, 
 		returning the point cloud containing 3D points and normals of the zero-crossing dense surface at every visible pixel in the image 
 		from the specified camera pose and color visualization image.*/
-		hr = m_pVolume->CalculatePointCloud(m_pPointCloud, &m_worldToCameraTransform);
-
+		//hr = m_pVolume->CalculatePointCloud(m_pPointCloud, &m_worldToCameraTransform);
+		hr = m_pVolume->CalculatePointCloud(m_pPointCloud, m_pCapturedSurfaceColor, &m_worldToCameraTransform);
 		if (FAILED(hr))
 		{
 			cout << "Kinect Fusion CalculatePointCloud call failed." << endl;
@@ -974,7 +1063,7 @@ namespace basicgraphics {
 	/// <param name="lpOleFileName">The full path and filename of the file to save.</param>
 	/// <param name="flipYZ">Flag to determine whether the Y and Z values are flipped on save.</param>
 	/// <returns>indicates success or failure</returns>
-	HRESULT App::WriteAsciiObjMeshFile(INuiFusionMesh *mesh, std::string filename, bool flipYZ)
+	HRESULT App::WriteAsciiObjMeshFile(INuiFusionColorMesh *mesh, std::string filename, bool flipYZ)
 	{
 		HRESULT hr = S_OK;
 
@@ -1449,7 +1538,61 @@ HRESULT App::MapColorToDepth()
 	}
 
 	return hr;
-}
+	}
+
+	/// <summary>
+	/// Down sample color frame with nearest neighbor to the depth frame resolution
+	/// </summary>
+	/// <param name="src">The source color image.</param>
+	/// <param name="dest">The destination down sampled  image.</param>
+	/// <returns>S_OK on success, otherwise failure code</returns>
+	HRESULT App:: DownsampleColorFrameToDepthResolution(NUI_FUSION_IMAGE_FRAME *src, NUI_FUSION_IMAGE_FRAME *dest)
+	{
+		if (nullptr == src || nullptr == dest)
+		{
+			return E_INVALIDARG;
+		}
+
+		if (src->imageType != NUI_FUSION_IMAGE_TYPE_COLOR || src->imageType != dest->imageType
+			|| src->width != 1920 || src->height != 1080 || dest->width != NUI_DEPTH_RAW_WIDTH || dest->height != NUI_DEPTH_RAW_HEIGHT)
+		{
+			return E_INVALIDARG;
+		}
+
+		NUI_FUSION_BUFFER *srcFrameBuffer = src->pFrameBuffer;
+		NUI_FUSION_BUFFER *downsampledFloatFrameBuffer = dest->pFrameBuffer;
+
+		float factor = 1080.0f / NUI_DEPTH_RAW_HEIGHT;
+
+		// Make sure we've received valid data
+		if (srcFrameBuffer->Pitch == 0 || downsampledFloatFrameBuffer->Pitch == 0)
+		{
+			return E_NOINTERFACE;
+		}
+
+		HRESULT hr = S_OK;
+		float *srcValues = (float *)srcFrameBuffer->pBits;
+		float *downsampledDestValues = (float *)downsampledFloatFrameBuffer->pBits;
+
+		const unsigned int filledZeroMargin = 0;
+		const unsigned int downsampledWidth = dest->width;
+		const unsigned int srcImageWidth = src->width;
+
+		ZeroMemory(downsampledDestValues, downsampledFloatFrameBuffer->Pitch * dest->height);
+		Concurrency::parallel_for(filledZeroMargin, dest->height - filledZeroMargin, [=, &downsampledDestValues, &srcValues](unsigned int y)
+		{
+			unsigned int index = dest->width * y;
+			for (unsigned int x = 0; x < downsampledWidth; ++x, ++index)
+			{
+				int srcX = (int)(x * factor);
+				int srcY = (int)(y * factor);
+				int srcIndex = srcY * srcImageWidth + srcX;
+				downsampledDestValues[index] = srcValues[srcIndex];
+			}
+		});
+
+		return hr;
+	}
 }
 //namespace
 

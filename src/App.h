@@ -14,6 +14,7 @@
 #include <assimp/postprocess.h> 
 #include <assimp/DefaultLogger.hpp>
 #include <assimp/LogStream.hpp>
+#include "ppl.h"
 #include <assimp/IOSystem.hpp>
 
 
@@ -51,8 +52,8 @@ namespace basicgraphics {
 		static const int            cTimeDisplayInterval = 10;
 		
 		//added color portion
-		static const int cColorWidth = 1920;
-		static const int cColorHeight = 1080;
+		static const int cColorWidth = NUI_DEPTH_RAW_WIDTH;
+		static const int cColorHeight = NUI_DEPTH_RAW_HEIGHT;
 
 		static const int            cVisibilityTestQuantShift = 2; // shift by 2 == divide by 4
 		static const UINT16         cDepthVisibilityTestThreshold = 50; //50 mm
@@ -124,10 +125,11 @@ namespace basicgraphics {
 		/// <summary>
 		/// Handle new depth data
 		/// </summary>
-		void                        ProcessDepth();
+		bool                        ProcessDepth();
 
 
-		HRESULT	 WriteAsciiObjMeshFile(INuiFusionMesh *mesh, std::string filename, bool flipYZ);
+		//HRESULT	 WriteAsciiObjMeshFile(INuiFusionMesh *mesh, std::string filename, bool flipYZ);
+		HRESULT	 WriteAsciiObjMeshFile(INuiFusionColorMesh *mesh, std::string filename, bool flipYZ);
 
 		/// <summary>
 		/// Reset the reconstruction camera pose and clear the volume.
@@ -162,6 +164,7 @@ namespace basicgraphics {
 		/// </summary>
 		UINT16*                     m_pDepthImagePixelBuffer;
 		NUI_FUSION_IMAGE_FRAME*     m_pDepthFloatImage;
+		UINT16* m_pDepthRawPixelBuffer;
 
 		/// <summary>
 		/// For depth distortion correction
@@ -248,10 +251,11 @@ namespace basicgraphics {
 		NUI_FUSION_IMAGE_FRAME*     m_pResampledColorImage;
 		NUI_FUSION_IMAGE_FRAME*     m_pCapturedSurfaceColor;
 		UINT16* m_pDepthVisibilityTestMap;
+		HRESULT DownsampleColorFrameToDepthResolution(NUI_FUSION_IMAGE_FRAME *src, NUI_FUSION_IMAGE_FRAME *dest);
 
 		HRESULT CopyColor(IColorFrame* pColorFrame);
 		HRESULT MapColorToDepth();
-
+		bool m_bCaptureColor;
 	};
 }
 #endif
