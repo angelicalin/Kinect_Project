@@ -39,6 +39,7 @@ namespace basicgraphics {
 		m_pDepthDistortionMap(nullptr),
 		m_pDepthDistortionLT(nullptr),
 		m_pDepthFloatImage(nullptr),
+		m_pSmoothDepthFloatImage(nullptr),
 		m_pPointCloud(nullptr),
 		m_pShadedSurface(nullptr),
 		m_bInitializeError(false),
@@ -71,9 +72,9 @@ namespace basicgraphics {
 		// Define a cubic Kinect Fusion reconstruction volume,
 		// with the Kinect at the center of the front face and the volume directly in front of Kinect.
 		m_reconstructionParams.voxelsPerMeter = 256;// 1000mm / 256vpm = ~3.9mm/voxel    
-		m_reconstructionParams.voxelCountX = 384;   // 384 / 256vpm = 1.5m wide reconstruction
-		m_reconstructionParams.voxelCountY = 384;   // Memory = 384*384*384 * 4bytes per voxel
-		m_reconstructionParams.voxelCountZ = 384;   // This will require a GPU with at least 256MB
+		m_reconstructionParams.voxelCountX = 256;   // 384 / 256vpm = 1.5m wide reconstruction
+		m_reconstructionParams.voxelCountY = 256;   // Memory = 384*384*384 * 4bytes per voxel
+		m_reconstructionParams.voxelCountZ = 256;   // This will require a GPU with at least 256MB
 
 													// These parameters are for optionally clipping the input depth image 
 		m_fMinDepthThreshold = NUI_FUSION_DEFAULT_MINIMUM_DEPTH;   // min depth in meters
@@ -97,6 +98,7 @@ namespace basicgraphics {
 
 		SetIdentityMatrix(m_worldToCameraTransform);
 		SetIdentityMatrix(m_defaultWorldToVolumeTransform);
+		SetIdentityMatrix(m_worldToBGRTransform);
 
 		// We don't know these at object creation time, so we use nominal values.
 		// These will later be updated in response to the CoordinateMappingChanged event.
@@ -181,7 +183,7 @@ namespace basicgraphics {
 		SAFE_FUSION_RELEASE_IMAGE_FRAME(m_pShadedSurface);
 		SAFE_FUSION_RELEASE_IMAGE_FRAME(m_pPointCloud);
 		SAFE_FUSION_RELEASE_IMAGE_FRAME(m_pDepthFloatImage);
-		
+		SAFE_FUSION_RELEASE_IMAGE_FRAME(m_pSmoothDepthFloatImage);
 		SAFE_FUSION_RELEASE_IMAGE_FRAME(m_pColorImage);
 		SAFE_FUSION_RELEASE_IMAGE_FRAME(m_pResampledColorImage);
 		SAFE_FUSION_RELEASE_IMAGE_FRAME(m_pResampledColorImageDepthAligned);
@@ -251,7 +253,8 @@ namespace basicgraphics {
 			INuiFusionColorMesh* mesh = nullptr;
 			HRESULT hr = m_pVolume->CalculateMesh(1, &mesh);
 			if (SUCCEEDED(hr)) {
-				hr = WriteAsciiObjMeshFile(mesh, "testboop", false);
+//				hr = WriteAsciiObjMeshFile(mesh, "testaboop", false);
+				hr = WriteAsciiPlyMeshFile(mesh, "testply", false, true);
 				if (SUCCEEDED(hr)) {
 					cout << "Done" << endl;
 				}
@@ -349,8 +352,17 @@ namespace basicgraphics {
 			}
 			else
 			{
+
 				if (SUCCEEDED(hr))
 				{
+					IFrameDescription *desp = nullptr;
+					pColorFrame->get_FrameDescription(&desp);
+					int widthx = 0;
+					int heightx = 0;
+					uint length = 0;
+					desp->get_Width(&widthx);
+					desp->get_Height(&heightx);
+					desp->get_LengthInPixels(&length);
 					CopyColor(pColorFrame);
 				}
 				SafeRelease(pColorFrame);
@@ -551,6 +563,8 @@ namespace basicgraphics {
 		UpdateIntrinsics(m_pDepthFloatImage, &m_cameraParameters);
 		UpdateIntrinsics(m_pPointCloud, &m_cameraParameters);
 		UpdateIntrinsics(m_pShadedSurface, &m_cameraParameters);
+		UpdateIntrinsics(m_pSmoothDepthFloatImage, &m_cameraParameters);
+
 		//COLOR portion
 		UpdateIntrinsics(m_pColorImage, &m_cameraParameters);
 		UpdateIntrinsics(m_pResampledColorImage, &m_cameraParameters);
@@ -730,6 +744,12 @@ namespace basicgraphics {
 			return hr;
 		}
 
+		hr = NuiFusionCreateImageFrame(NUI_FUSION_IMAGE_TYPE_FLOAT, m_cDepthWidth, m_cDepthHeight, &m_cameraParameters, &m_pSmoothDepthFloatImage);
+		if (FAILED(hr))
+		{
+			return hr;
+		}
+
 		_ASSERT(m_pDepthImagePixelBuffer == nullptr);
 		m_pDepthImagePixelBuffer = new(std::nothrow) UINT16[m_cDepthImagePixels];
 		if (nullptr == m_pDepthImagePixelBuffer)
@@ -855,6 +875,17 @@ namespace basicgraphics {
 			return;
 		}
 
+		hr = m_pVolume->SmoothDepthFloatFrame(m_pDepthFloatImage, m_pSmoothDepthFloatImage, 1, 0.04f);
+		if (FAILED(hr))
+		{
+			cout << "Kinect Fusion SmoothDepth call failed." << endl;
+			return;
+		}
+		
+		hr = NuiFusionDepthFloatFrameToPointCloud(
+			m_pSmoothDepthFloatImage,
+			m_pPointCloud);
+
 		////////////////////////////////////////////////////////
 		// ProcessFrame
 
@@ -874,12 +905,12 @@ namespace basicgraphics {
 		
 		//hr = m_pVolume->ProcessFrame(m_pDepthFloatImage, NUI_FUSION_DEFAULT_ALIGN_ITERATION_COUNT, m_cMaxIntegrationWeight, nullptr, &m_worldToCameraTransform);
 		FLOAT alignmentEnergy = 0;
-		hr = m_pVolume->ProcessFrame(m_pDepthFloatImage,
-			m_pColorImage,
-			NUI_FUSION_DEFAULT_ALIGN_ITERATION_COUNT, 
-			m_cMaxIntegrationWeight, 
-			NUI_FUSION_DEFAULT_COLOR_INTEGRATION_OF_ALL_ANGLES, 
-			&alignmentEnergy, 
+		DownsampleColorFrameToDepthResolution(m_pColorImage, m_pResampledColorImageDepthAligned);
+		//m_pVolume->AlignDepthFloatToReconstruction(m_pDepthFloatImage,MAX_NATURAL_ALIGNMENT,);
+		// Map the color frame to the depth - this fills m_pResampledColorImageDepthAligned
+
+		MapColorToDepth();
+		hr = m_pVolume->ProcessFrame(m_pSmoothDepthFloatImage, m_pResampledColorImageDepthAligned,NUI_FUSION_DEFAULT_ALIGN_ITERATION_COUNT, m_cMaxIntegrationWeight, 1.0f, &alignmentEnergy,
 			&m_worldToCameraTransform);
 		// Test to see if camera tracking failed. 
 		// If it did fail, no data integration or raycast for reference points and normals will have taken 
@@ -925,28 +956,7 @@ namespace basicgraphics {
 			// Set bad tracking message
 			cout << "Kinect Fusion camera tracking failed, automatically reset volume." << endl;
 		}
-		bool integrateData = !m_bTrackingFailed;
 
-		if (integrateData)
-		{
-
-				// Map the color frame to the depth - this fills m_pResampledColorImageDepthAligned
-				MapColorToDepth();
-
-				// Integrate the depth and color data into the volume from the calculated camera pose
-				hr = m_pVolume->IntegrateFrame(
-					m_pDepthFloatImage,
-					m_pResampledColorImageDepthAligned,
-					m_cMaxIntegrationWeight,
-					NUI_FUSION_DEFAULT_COLOR_INTEGRATION_OF_ALL_ANGLES,
-					&m_worldToCameraTransform);
-			}
-
-
-			if (FAILED(hr))
-			{
-				cout<<"Kinect Fusion IntegrateFrame call failed."<<endl;
-			}
 
 		////////////////////////////////////////////////////////
 		// CalculatePointCloud
@@ -982,7 +992,7 @@ namespace basicgraphics {
 		
 		NUI_FUSION_IMAGE_FRAME pShadedSurfaceNormalsFrame :  A color image frame that receives the shaded frame.
 		*/
-		hr = NuiFusionShadePointCloud(m_pPointCloud, &m_worldToCameraTransform, nullptr, m_pShadedSurface, nullptr);
+		hr = NuiFusionShadePointCloud(m_pPointCloud, &m_worldToCameraTransform, &m_worldToBGRTransform, m_pShadedSurface, nullptr);
 
 		if (FAILED(hr))
 		{
@@ -1012,7 +1022,13 @@ namespace basicgraphics {
 		HRESULT hr = S_OK;
 
 		SetIdentityMatrix(m_worldToCameraTransform);
-
+		SetIdentityMatrix(m_worldToBGRTransform);
+		m_worldToBGRTransform.M11 = m_reconstructionParams.voxelsPerMeter / m_reconstructionParams.voxelCountX;
+		m_worldToBGRTransform.M22 = m_reconstructionParams.voxelsPerMeter / m_reconstructionParams.voxelCountY;
+		m_worldToBGRTransform.M33 = m_reconstructionParams.voxelsPerMeter /m_reconstructionParams.voxelCountZ;
+		m_worldToBGRTransform.M41 = 0.5f;
+		m_worldToBGRTransform.M42 = 0.5f;
+		m_worldToBGRTransform.M44 = 1.0f;
 		// Translate the reconstruction volume location away from the world origin by an amount equal
 		// to the minimum depth threshold. This ensures that some depth signal falls inside the volume.
 		// If set false, the default world origin is set to the center of the front face of the 
@@ -1046,136 +1062,6 @@ namespace basicgraphics {
 		{
 			cout << "Failed to reset reconstruction." << endl;
 		}
-
-		return hr;
-	}
-
-
-
-
-
-
-	/// <summary>
-	/// Write ASCII Wavefront .OBJ file
-	/// See http://en.wikipedia.org/wiki/Wavefront_.obj_file for .OBJ format
-	/// </summary>
-	/// <param name="mesh">The Kinect Fusion mesh object.</param>
-	/// <param name="lpOleFileName">The full path and filename of the file to save.</param>
-	/// <param name="flipYZ">Flag to determine whether the Y and Z values are flipped on save.</param>
-	/// <returns>indicates success or failure</returns>
-	HRESULT App::WriteAsciiObjMeshFile(INuiFusionColorMesh *mesh, std::string filename, bool flipYZ)
-	{
-		HRESULT hr = S_OK;
-
-		if (NULL == mesh)
-		{
-			return E_INVALIDARG;
-		}
-
-		unsigned int numVertices = mesh->VertexCount();
-		unsigned int numTriangleIndices = mesh->TriangleVertexIndexCount();
-		unsigned int numTriangles = numVertices / 3;
-
-		if (0 == numVertices || 0 == numTriangleIndices || 0 != numVertices % 3 || numVertices != numTriangleIndices)
-		{
-			return E_INVALIDARG;
-		}
-
-		const Vector3 *vertices = NULL;
-		hr = mesh->GetVertices(&vertices);
-		if (FAILED(hr))
-		{
-			return hr;
-		}
-
-		const Vector3 *normals = NULL;
-		hr = mesh->GetNormals(&normals);
-		if (FAILED(hr))
-		{
-			return hr;
-		}
-
-		const int *triangleIndices = NULL;
-		hr = mesh->GetTriangleIndices(&triangleIndices);
-		if (FAILED(hr))
-		{
-			return hr;
-		}
-
-		FILE *meshFile = NULL;
-		errno_t err = fopen_s(&meshFile, filename.c_str(), "wt");
-
-		// Could not open file for writing - return
-		if (0 != err || NULL == meshFile)
-		{
-			return E_ACCESSDENIED;
-		}
-
-		// Write the header line
-		std::string header = "#\n# OBJ file created by Microsoft Kinect Fusion\n#\n";
-		fwrite(header.c_str(), sizeof(char), header.length(), meshFile);
-
-		const unsigned int bufSize = MAX_PATH * 3;
-		char outStr[bufSize];
-		int written = 0;
-
-		if (flipYZ)
-		{
-			// Sequentially write the 3 vertices of the triangle, for each triangle
-			for (unsigned int t = 0, vertexIndex = 0; t < numTriangles; ++t, vertexIndex += 3)
-			{
-				written = sprintf_s(outStr, bufSize, "v %f %f %f\nv %f %f %f\nv %f %f %f\n",
-					vertices[vertexIndex].x, -vertices[vertexIndex].y, -vertices[vertexIndex].z,
-					vertices[vertexIndex + 1].x, -vertices[vertexIndex + 1].y, -vertices[vertexIndex + 1].z,
-					vertices[vertexIndex + 2].x, -vertices[vertexIndex + 2].y, -vertices[vertexIndex + 2].z);
-				fwrite(outStr, sizeof(char), written, meshFile);
-			}
-
-			// Sequentially write the 3 normals of the triangle, for each triangle
-			for (unsigned int t = 0, normalIndex = 0; t < numTriangles; ++t, normalIndex += 3)
-			{
-				written = sprintf_s(outStr, bufSize, "n %f %f %f\nn %f %f %f\nn %f %f %f\n",
-					normals[normalIndex].x, -normals[normalIndex].y, -normals[normalIndex].z,
-					normals[normalIndex + 1].x, -normals[normalIndex + 1].y, -normals[normalIndex + 1].z,
-					normals[normalIndex + 2].x, -normals[normalIndex + 2].y, -normals[normalIndex + 2].z);
-				fwrite(outStr, sizeof(char), written, meshFile);
-			}
-		}
-		else
-		{
-			// Sequentially write the 3 vertices of the triangle, for each triangle
-			for (unsigned int t = 0, vertexIndex = 0; t < numTriangles; ++t, vertexIndex += 3)
-			{
-				written = sprintf_s(outStr, bufSize, "v %f %f %f\nv %f %f %f\nv %f %f %f\n",
-					vertices[vertexIndex].x, vertices[vertexIndex].y, vertices[vertexIndex].z,
-					vertices[vertexIndex + 1].x, vertices[vertexIndex + 1].y, vertices[vertexIndex + 1].z,
-					vertices[vertexIndex + 2].x, vertices[vertexIndex + 2].y, vertices[vertexIndex + 2].z);
-				fwrite(outStr, sizeof(char), written, meshFile);
-			}
-
-			// Sequentially write the 3 normals of the triangle, for each triangle
-			for (unsigned int t = 0, normalIndex = 0; t < numTriangles; ++t, normalIndex += 3)
-			{
-				written = sprintf_s(outStr, bufSize, "n %f %f %f\nn %f %f %f\nn %f %f %f\n",
-					normals[normalIndex].x, normals[normalIndex].y, normals[normalIndex].z,
-					normals[normalIndex + 1].x, normals[normalIndex + 1].y, normals[normalIndex + 1].z,
-					normals[normalIndex + 2].x, normals[normalIndex + 2].y, normals[normalIndex + 2].z);
-				fwrite(outStr, sizeof(char), written, meshFile);
-			}
-		}
-
-		// Sequentially write the 3 vertex indices of the triangle face, for each triangle
-		// Note this is typically 1-indexed in an OBJ file when using absolute referencing!
-		for (unsigned int t = 0, baseIndex = 1; t < numTriangles; ++t, baseIndex += 3) // Start at baseIndex=1 for the 1-based indexing.
-		{
-			written = sprintf_s(outStr, bufSize, "f %u//%u %u//%u %u//%u\n",
-				baseIndex, baseIndex, baseIndex + 1, baseIndex + 1, baseIndex + 2, baseIndex + 2);
-			fwrite(outStr, sizeof(char), written, meshFile);
-		}
-
-		// Note: we do not have texcoords to store, if we did, we would put the index of the texcoords between the vertex and normal indices (i.e. between the two slashes //) in the string above
-		fflush(meshFile);
-		fclose(meshFile);
 
 		return hr;
 	}
@@ -1359,8 +1245,11 @@ HRESULT App::CopyColor(IColorFrame* pColorFrame)
 		return E_NOINTERFACE;
 	}
 
+	int width = m_pColorImage->width;
+	int height = m_pColorImage->height;
+
 	// Copy the color pixels so we can return the image frame
-	hr = pColorFrame->CopyConvertedFrameDataToArray(cColorWidth * cColorHeight * sizeof(RGBQUAD), destColorBuffer->pBits, ColorImageFormat_Bgra);
+	hr = pColorFrame->CopyConvertedFrameDataToArray( cColorWidth * cColorHeight * sizeof(RGBQUAD), destColorBuffer->pBits, ColorImageFormat_Bgra);
 
 	if (FAILED(hr))
 	{
@@ -1593,6 +1482,296 @@ HRESULT App::MapColorToDepth()
 
 		return hr;
 	}
+
+	
+	/// <summary>
+	/// Write ASCII Wavefront .OBJ file
+	/// See http://en.wikipedia.org/wiki/Wavefront_.obj_file for .OBJ format
+	/// </summary>
+	/// <param name="mesh">The Kinect Fusion mesh object.</param>
+	/// <param name="lpOleFileName">The full path and filename of the file to save.</param>
+	/// <param name="flipYZ">Flag to determine whether the Y and Z values are flipped on save.</param>
+	/// <returns>indicates success or failure</returns>
+	HRESULT App::WriteAsciiObjMeshFile(INuiFusionColorMesh *mesh, std::string filename, bool flipYZ)
+	{
+		HRESULT hr = S_OK;
+
+		if (NULL == mesh)
+		{
+			return E_INVALIDARG;
+		}
+
+		unsigned int numVertices = mesh->VertexCount();
+		unsigned int numTriangleIndices = mesh->TriangleVertexIndexCount();
+		unsigned int numTriangles = numVertices / 3;
+		unsigned int numColors = mesh->ColorCount();
+
+		if (0 == numVertices || 0 == numTriangleIndices || 0 != numVertices % 3 || numVertices != numTriangleIndices || ( numVertices != numColors))
+		{
+			return E_INVALIDARG;
+		}
+
+		const Vector3 *vertices = NULL;
+		hr = mesh->GetVertices(&vertices);
+		if (FAILED(hr))
+		{
+			return hr;
+		}
+
+		const Vector3 *normals = NULL;
+		hr = mesh->GetNormals(&normals);
+		if (FAILED(hr))
+		{
+			return hr;
+		}
+
+		const int *triangleIndices = NULL;
+		hr = mesh->GetTriangleIndices(&triangleIndices);
+		if (FAILED(hr))
+		{
+			return hr;
+		}
+		
+		const int *colors = NULL;
+		hr = mesh->GetColors(&colors);
+		if (FAILED(hr)){
+			return hr;
+		}
+		
+
+		FILE *meshFile = NULL;
+		errno_t err = fopen_s(&meshFile, filename.c_str(), "wt");
+
+		// Could not open file for writing - return
+		if (0 != err || NULL == meshFile)
+		{
+			return E_ACCESSDENIED;
+		}
+
+		// Write the header line
+		std::string header = "#\n# OBJ file created by Microsoft Kinect Fusion\n#\n";
+		fwrite(header.c_str(), sizeof(char), header.length(), meshFile);
+
+		const unsigned int bufSize = MAX_PATH * 3;
+		char outStr[bufSize];
+		int written = 0;
+
+
+			// Sequentially write the 3 vertices of the triangle, for each triangle
+		for (unsigned int t = 0, vertexIndex = 0; t < numTriangles; ++t, vertexIndex += 3)
+			{
+				unsigned int color0 = colors[vertexIndex];
+				unsigned int color1 = colors[vertexIndex + 1];
+				unsigned int color2 = colors[vertexIndex + 2];
+
+				written = sprintf_s(outStr, bufSize, "v %f %f %f \nv %f %f %f \nv %f %f %f\n",
+					vertices[vertexIndex].x, vertices[vertexIndex].y, vertices[vertexIndex].z,
+					//	(float)((color0>>16)&255)/255.0, (float)((color0 >> 8) & 255) / 255.0, (float)((color0) & 255) / 255.0,
+					vertices[vertexIndex + 1].x, vertices[vertexIndex + 1].y, vertices[vertexIndex + 1].z,
+					//	(float)((color1 >> 16) & 255) / 255.0, (float)((color1 >> 8) & 255) / 255.0, (float)((color1) & 255) / 255.0,
+					vertices[vertexIndex + 2].x, vertices[vertexIndex + 2].y, vertices[vertexIndex + 2].z);
+				//	(float)((color2 >> 16) & 255) / 255.0, (float)((color2 >> 8) & 255) / 255.0, (float)((color2) & 255) / 255.0;
+				fwrite(outStr, sizeof(char), written, meshFile);
+			}
+
+			// Sequentially write the 3 normals of the triangle, for each triangle
+			for (unsigned int t = 0, normalIndex = 0; t < numTriangles; ++t, normalIndex += 3)
+			{
+				written = sprintf_s(outStr, bufSize, "n %f %f %f\nn %f %f %f\nn %f %f %f\n",
+					normals[normalIndex].x, normals[normalIndex].y, normals[normalIndex].z,
+					normals[normalIndex + 1].x, normals[normalIndex + 1].y, normals[normalIndex + 1].z,
+					normals[normalIndex + 2].x, normals[normalIndex + 2].y, normals[normalIndex + 2].z);
+				fwrite(outStr, sizeof(char), written, meshFile);
+			}
+		
+		
+		// Sequentially write the 3 vertex indices of the triangle face, for each triangle
+		// Note this is typically 1-indexed in an OBJ file when using absolute referencing!
+		for (unsigned int t = 0, baseIndex = 1; t < numTriangles; ++t, baseIndex += 3) // Start at baseIndex=1 for the 1-based indexing.
+		{
+			written = sprintf_s(outStr, bufSize, "f %u//%u %u//%u %u//%u\n",
+				baseIndex, baseIndex, baseIndex + 1, baseIndex + 1, baseIndex + 2, baseIndex + 2);
+			fwrite(outStr, sizeof(char), written, meshFile);
+		}
+
+		// Note: we do not have texcoords to store, if we did, we would put the index of the texcoords between the vertex and normal indices (i.e. between the two slashes //) in the string above
+		fflush(meshFile);
+		fclose(meshFile);
+
+		return hr;
+	}
+	
+	/// <summary>
+	/// Write ASCII .PLY file
+	/// See http://paulbourke.net/dataformats/ply/ for .PLY format
+	/// </summary>
+	/// <param name="mesh">The Kinect Fusion mesh object.</param>
+	/// <param name="lpOleFileName">The full path and filename of the file to save.</param>
+	/// <param name="flipYZ">Flag to determine whether the Y and Z values are flipped on save.</param>
+	/// <param name="outputColor">Set this true to write out the surface color to the file when it has been captured.</param>
+	/// <returns>indicates success or failure</returns>
+	HRESULT App::WriteAsciiPlyMeshFile(INuiFusionColorMesh *mesh, std::string filename, bool flipYZ, bool outputColor)
+	{
+		HRESULT hr = S_OK;
+
+		if (NULL == mesh)
+		{
+			return E_INVALIDARG;
+		}
+
+		unsigned int numVertices = mesh->VertexCount();
+		unsigned int numTriangleIndices = mesh->TriangleVertexIndexCount();
+		unsigned int numTriangles = numVertices / 3;
+		unsigned int numColors = mesh->ColorCount();
+
+		if (0 == numVertices || 0 == numTriangleIndices || 0 != numVertices % 3
+			|| numVertices != numTriangleIndices || (outputColor && numVertices != numColors))
+		{
+			return E_INVALIDARG;
+		}
+
+		const Vector3 *vertices = NULL;
+		hr = mesh->GetVertices(&vertices);
+		if (FAILED(hr))
+		{
+			return hr;
+		}
+
+		const int *triangleIndices = NULL;
+		hr = mesh->GetTriangleIndices(&triangleIndices);
+		if (FAILED(hr))
+		{
+			return hr;
+		}
+
+		const int *colors = NULL;
+		if (outputColor)
+		{
+			hr = mesh->GetColors(&colors);
+			if (FAILED(hr))
+			{
+				return hr;
+			}
+		}
+
+		// Open File
+		FILE *meshFile = NULL;
+		errno_t err = fopen_s(&meshFile, filename.c_str(), "wt");
+
+		// Could not open file for writing - return
+		if (0 != err || NULL == meshFile)
+		{
+			return E_ACCESSDENIED;
+		}
+
+		// Write the header line
+		std::string header = "ply\nformat ascii 1.0\ncomment file created by Microsoft Kinect Fusion\n";
+		fwrite(header.c_str(), sizeof(char), header.length(), meshFile);
+
+		const unsigned int bufSize = MAX_PATH * 3;
+		char outStr[bufSize];
+		int written = 0;
+
+		if (outputColor)
+		{
+			// Elements are: x,y,z, r,g,b
+			written = sprintf_s(outStr, bufSize, "element vertex %u\nproperty float x\nproperty float y\nproperty float z\nproperty uchar red\nproperty uchar green\nproperty uchar blue\n", numVertices);
+			fwrite(outStr, sizeof(char), written, meshFile);
+		}
+		else
+		{
+			// Elements are: x,y,z
+			written = sprintf_s(outStr, bufSize, "element vertex %u\nproperty float x\nproperty float y\nproperty float z\n", numVertices);
+			fwrite(outStr, sizeof(char), written, meshFile);
+		}
+
+		written = sprintf_s(outStr, bufSize, "element face %u\nproperty list uchar int vertex_index\nend_header\n", numTriangles);
+		fwrite(outStr, sizeof(char), written, meshFile);
+
+		if (flipYZ)
+		{
+			if (outputColor)
+			{
+				// Sequentially write the 3 vertices of the triangle, for each triangle
+				for (unsigned int t = 0, vertexIndex = 0; t < numTriangles; ++t, vertexIndex += 3)
+				{
+					unsigned int color0 = colors[vertexIndex];
+					unsigned int color1 = colors[vertexIndex + 1];
+					unsigned int color2 = colors[vertexIndex + 2];
+
+					written = sprintf_s(outStr, bufSize, "%f %f %f %u %u %u\n%f %f %f %u %u %u\n%f %f %f %u %u %u\n",
+						vertices[vertexIndex].x, -vertices[vertexIndex].y, -vertices[vertexIndex].z,
+						((color0 >> 16) & 255), ((color0 >> 8) & 255), (color0 & 255),
+						vertices[vertexIndex + 1].x, -vertices[vertexIndex + 1].y, -vertices[vertexIndex + 1].z,
+						((color1 >> 16) & 255), ((color1 >> 8) & 255), (color1 & 255),
+						vertices[vertexIndex + 2].x, -vertices[vertexIndex + 2].y, -vertices[vertexIndex + 2].z,
+						((color2 >> 16) & 255), ((color2 >> 8) & 255), (color2 & 255));
+
+					fwrite(outStr, sizeof(char), written, meshFile);
+				}
+			}
+			else
+			{
+				// Sequentially write the 3 vertices of the triangle, for each triangle
+				for (unsigned int t = 0, vertexIndex = 0; t < numTriangles; ++t, vertexIndex += 3)
+				{
+					written = sprintf_s(outStr, bufSize, "%f %f %f\n%f %f %f\n%f %f %f\n",
+						vertices[vertexIndex].x, -vertices[vertexIndex].y, -vertices[vertexIndex].z,
+						vertices[vertexIndex + 1].x, -vertices[vertexIndex + 1].y, -vertices[vertexIndex + 1].z,
+						vertices[vertexIndex + 2].x, -vertices[vertexIndex + 2].y, -vertices[vertexIndex + 2].z);
+					fwrite(outStr, sizeof(char), written, meshFile);
+				}
+			}
+		}
+		else
+		{
+			if (outputColor)
+			{
+				// Sequentially write the 3 vertices of the triangle, for each triangle
+				for (unsigned int t = 0, vertexIndex = 0; t < numTriangles; ++t, vertexIndex += 3)
+				{
+					unsigned int color0 = colors[vertexIndex];
+					unsigned int color1 = colors[vertexIndex + 1];
+					unsigned int color2 = colors[vertexIndex + 2];
+
+					written = sprintf_s(outStr, bufSize, "%f %f %f %u %u %u\n%f %f %f %u %u %u\n%f %f %f %u %u %u\n",
+						vertices[vertexIndex].x, vertices[vertexIndex].y, vertices[vertexIndex].z,
+						((color0 >> 16) & 255), ((color0 >> 8) & 255), (color0 & 255),
+						vertices[vertexIndex + 1].x, vertices[vertexIndex + 1].y, vertices[vertexIndex + 1].z,
+						((color1 >> 16) & 255), ((color1 >> 8) & 255), (color1 & 255),
+						vertices[vertexIndex + 2].x, vertices[vertexIndex + 2].y, vertices[vertexIndex + 2].z,
+						((color2 >> 16) & 255), ((color2 >> 8) & 255), (color2 & 255));
+
+					fwrite(outStr, sizeof(char), written, meshFile);
+				}
+			}
+			else
+			{
+				// Sequentially write the 3 vertices of the triangle, for each triangle
+				for (unsigned int t = 0, vertexIndex = 0; t < numTriangles; ++t, vertexIndex += 3)
+				{
+					written = sprintf_s(outStr, bufSize, "%f %f %f\n%f %f %f\n%f %f %f\n",
+						vertices[vertexIndex].x, vertices[vertexIndex].y, vertices[vertexIndex].z,
+						vertices[vertexIndex + 1].x, vertices[vertexIndex + 1].y, vertices[vertexIndex + 1].z,
+						vertices[vertexIndex + 2].x, vertices[vertexIndex + 2].y, vertices[vertexIndex + 2].z);
+					fwrite(outStr, sizeof(char), written, meshFile);
+				}
+			}
+		}
+
+		// Sequentially write the 3 vertex indices of the triangle face, for each triangle (0-referenced in PLY)
+		for (unsigned int t = 0, baseIndex = 0; t < numTriangles; ++t, baseIndex += 3)
+		{
+			written = sprintf_s(outStr, bufSize, "3 %u %u %u\n", baseIndex, baseIndex + 1, baseIndex + 2);
+			fwrite(outStr, sizeof(char), written, meshFile);
+		}
+
+		fflush(meshFile);
+		fclose(meshFile);
+
+		return hr;
+	}
+
 }
 //namespace
 

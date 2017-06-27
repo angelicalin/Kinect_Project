@@ -52,8 +52,8 @@ namespace basicgraphics {
 		static const int            cTimeDisplayInterval = 10;
 		
 		//added color portion
-		static const int cColorWidth = NUI_DEPTH_RAW_WIDTH;
-		static const int cColorHeight = NUI_DEPTH_RAW_HEIGHT;
+		static const int cColorWidth = 1920;
+		static const int cColorHeight = 1080;
 
 		static const int            cVisibilityTestQuantShift = 2; // shift by 2 == divide by 4
 		static const UINT16         cDepthVisibilityTestThreshold = 50; //50 mm
@@ -125,11 +125,12 @@ namespace basicgraphics {
 		/// <summary>
 		/// Handle new depth data
 		/// </summary>
-		bool                        ProcessDepth();
+		void                        ProcessDepth();
 
 
 		//HRESULT	 WriteAsciiObjMeshFile(INuiFusionMesh *mesh, std::string filename, bool flipYZ);
 		HRESULT	 WriteAsciiObjMeshFile(INuiFusionColorMesh *mesh, std::string filename, bool flipYZ);
+		HRESULT WriteAsciiPlyMeshFile(INuiFusionColorMesh *mesh, std::string lpOleFileName, bool flipYZ, bool outputColor);
 
 		/// <summary>
 		/// Reset the reconstruction camera pose and clear the volume.
@@ -159,6 +160,7 @@ namespace basicgraphics {
 		/// </summary>
 		Matrix4                     m_defaultWorldToVolumeTransform;
 
+		Matrix4                     m_worldToBGRTransform;
 		/// <summary>
 		/// Frames from the depth input
 		/// </summary>
@@ -185,6 +187,7 @@ namespace basicgraphics {
 		/// </summary>
 		NUI_FUSION_IMAGE_FRAME*     m_pPointCloud;
 
+		NUI_FUSION_IMAGE_FRAME*     m_pSmoothDepthFloatImage;
 		/// <summary>
 		/// Images for display
 		/// </summary>
