@@ -71,14 +71,14 @@ namespace basicgraphics {
 
 		// Define a cubic Kinect Fusion reconstruction volume,
 		// with the Kinect at the center of the front face and the volume directly in front of Kinect.
-		m_reconstructionParams.voxelsPerMeter = 256;// 1000mm / 256vpm = ~3.9mm/voxel    
-		m_reconstructionParams.voxelCountX = 256;   // 384 / 256vpm = 1.5m wide reconstruction
-		m_reconstructionParams.voxelCountY = 256;   // Memory = 384*384*384 * 4bytes per voxel
-		m_reconstructionParams.voxelCountZ = 256;   // This will require a GPU with at least 256MB
+		m_reconstructionParams.voxelsPerMeter = 384;// 1000mm / 384vpm = ~2.6mm/voxel    
+		m_reconstructionParams.voxelCountX = 256;   // 256 / 384vpm = ~0.67m wide reconstruction
+		m_reconstructionParams.voxelCountY = 256;   // Memory = 256*256*256 * 4bytes per voxel
+		m_reconstructionParams.voxelCountZ = 256;   // This will require a GPU with at least 128 MB
 
 													// These parameters are for optionally clipping the input depth image 
 		m_fMinDepthThreshold = NUI_FUSION_DEFAULT_MINIMUM_DEPTH;   // min depth in meters
-		m_fMaxDepthThreshold = NUI_FUSION_DEFAULT_MAXIMUM_DEPTH;    // max depth in meters
+		m_fMaxDepthThreshold = 2.0f;    // max depth in meters
 
 																	// This parameter is the temporal averaging parameter for depth integration into the reconstruction
 		m_cMaxIntegrationWeight = NUI_FUSION_DEFAULT_INTEGRATION_WEIGHT;	// Reasonable for static scenes
